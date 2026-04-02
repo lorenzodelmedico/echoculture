@@ -1,0 +1,47 @@
+[project]
+name = "echoculture"
+version = "0.1.0"
+description = "Culllltuuuure.....Cuuuuuuultuu..reeeeee...Cuuultuuuuree"
+authors = [
+    {name = "lorenzodelmedico@gmail.com"}
+]
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi (>=0.135.3,<0.136.0)",
+    "uvicorn (>=0.42.0,<0.43.0)",
+    "beautifulsoup4 (>=4.14.3,<5.0.0)",
+    "requests (>=2.33.1,<3.0.0)",
+    "sqlalchemy (>=2.0.48,<3.0.0)",
+    "psycopg2-binary (>=2.9.11,<3.0.0)",
+    "motor (>=3.7.1,<4.0.0)",
+    "python-dotenv (>=1.2.2,<2.0.0)",
+    "dateparser (>=1.4.0,<2.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+package-mode = false
+
+[tool.black]
+line-length = 88
+target-version = ['py312']
+include = '\.pyi?$'
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # On ne force pas encore le typage des fonctions
+ignore_missing_imports = true
+[dependency-groups]
+dev = [
+    "black (>=26.3.1,<27.0.0)",
+    "mypy (>=1.20.0,<2.0.0)",
+    "flake8 (>=7.3.0,<8.0.0)",
+    "pre-commit (>=4.5.1,<5.0.0)"
+]

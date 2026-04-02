@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.env
+
+# Poetry
+poetry.lock
+.pytest_cache/
+.mypy_cache/
+
+# OS
+.DS_Store
