@@ -6,9 +6,9 @@ services:
     image: postgres:16-alpine
     container_name: echoculture_pg
     environment:
-      POSTGRES_USER: lorenzo
-      POSTGRES_PASSWORD: echopassword
-      POSTGRES_DB: echoculture
+      POSTGRES_USER=${POSTGRES_USER}
+      POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      POSTGRES_DB=${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
@@ -40,10 +40,10 @@ services:
     ports:
       - "8081:8081"
     environment:
-      ME_CONFIG_MONGODB_ADMINUSERNAME: admin
-      ME_CONFIG_MONGODB_ADMINPASSWORD: mongopassword
+      ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
       # On utilise le nom du service "db_mongodb" dans l'URL
-      ME_CONFIG_MONGODB_URL: mongodb://admin:mongopassword@db_mongodb:27017/
+      ME_CONFIG_MONGODB_URL: mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@db_mongodb:27017/
     depends_on:
       - db_mongodb
 
