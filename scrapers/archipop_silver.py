@@ -5,8 +5,10 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from utils.ocr_engine import extract_text_from_url
+from utils.llm_engine import extract_events_with_llm
 
 load_dotenv()
+SOURCE_NAME = "archi-pop"
 
 # --- MODULES DE TRAITEMENT ---
 
@@ -15,16 +17,17 @@ async def create_tables(pg_conn):
     """Crée la table events si elle n'existe pas (Auto-migration)"""
     async with pg_conn.cursor() as cur:
         await cur.execute("""
-            CREATE TABLE IF NOT EXISTS events (
-                id SERIAL PRIMARY KEY,
-                source VARCHAR(50) NOT NULL,
-                title TEXT NOT NULL,
-                event_date_raw TEXT, -- Texte brut extrait de l'image
-                location TEXT,
-                raw_id VARCHAR(50),
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
+                    CREATE TABLE IF NOT EXISTS events (
+                        id SERIAL PRIMARY KEY,
+                        source VARCHAR(50) NOT NULL,
+                        title TEXT NOT NULL,
+                        event_type VARCHAR(50),
+                        event_date DATE,
+                        location TEXT,
+                        raw_id VARCHAR(50),
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
         await pg_conn.commit()
 
 
@@ -41,59 +44,80 @@ def extract_image_url(html_content):
 
 async def run_silver_transformation():
     # 1. Connexions
-    mongo_client = AsyncIOMotorClient(os.getenv("MONGO_URL"))
-    db_mongo = mongo_client.echoculture
+    db_url = os.getenv("POSTGRES_URL")
+    mongo_url = os.getenv("MONGO_URL")
 
-    pg_conn = await psycopg.AsyncConnection.connect(
-        "host=localhost dbname=echoculture user=lorenzo password=echopassword"
-    )
+    mongo_client = AsyncIOMotorClient(mongo_url)
+    db_mongo = mongo_client.echoculture
+    pg_conn = await psycopg.AsyncConnection.connect(db_url)
 
     try:
-        # A. Préparer la DB SQL
         await create_tables(pg_conn)
-        print("📁 Table Postgres prête.")
 
-        # B. Récupérer le dernier document Bronze SPÉCIFIQUE à Archi-Pop
         raw_doc = await db_mongo.raw_events.find_one(
-            {"source": "archi-pop"},  # Filtre : je ne veux que du Archi-Pop
-            sort=[("scraped_at", -1)],  # Tri : je veux le plus récent
+            {"source": SOURCE_NAME}, sort=[("scraped_at", -1)]
         )
+
         if not raw_doc:
-            print("❌ Aucune donnée Bronze trouvée.")
+            print(f"❌ Aucune donnée Bronze trouvée pour '{SOURCE_NAME}'.")
             return
 
-        # C. Extraire l'image
         img_url = extract_image_url(raw_doc["payload"])
-        if img_url:
-            print(f"🖼️ Image de programmation trouvée : {img_url}")
-            # TODO : Ici on ajoutera la brique OCR pour lire le contenu de l'image
-        else:
-            print("⚠️ Pas d'image de programmation trouvée.")
+        if not img_url:
+            return
 
-        # D. Extraction Modulaire
-        if img_url:
-            raw_text = extract_text_from_url(img_url)
+        # --- ÉTAPE SILVER : OCR ---
+        raw_text = extract_text_from_url(img_url)
+        if not raw_text:
+            print("❌ OCR vide.")
+            return
 
-            if raw_text:
-                print("--- TEXTE RÉCUPÉRÉ ---")
-                print(raw_text[:500] + "...")  # On affiche un extrait
+        print("--- TEXTE RÉCUPÉRÉ ---")
+        print(raw_text[:200] + "...")
 
-                # E. Insertion (Update ou Insert selon ta logique)
-                async with pg_conn.cursor() as cur:
+        # --- ÉTAPE GOLD : LLM ---
+        print("🧠 Structuration par LLM (Ollama) en cours...")
+        structured_events = extract_events_with_llm(raw_text)
+
+        async with pg_conn.cursor() as cur:
+            # 1. On nettoie les anciens événements pour cette source/image
+            # (Évite les doublons si tu relances le script)
+            await cur.execute(
+                "DELETE FROM events WHERE raw_id = %s", (str(raw_doc["_id"]),)
+            )
+
+            if not structured_events:
+                # Fallback : on log au moins l'OCR
+                await cur.execute(
+                    """INSERT INTO events (source, title, event_date_raw, raw_id)
+                       VALUES (%s, %s, %s, %s)""",
+                    (SOURCE_NAME, "LOG_OCR_ONLY", raw_text, str(raw_doc["_id"])),
+                )
+            else:
+                for ev in structured_events:
+                    print(structured_events)
+                    artist = ev.get("artist", "Inconnu")
+                    event_type = ev.get("type", "EVENT")
+                    date = ev.get("date")
+
+                    print(f"📌 Gold : {date} | {artist} ({event_type})")
                     await cur.execute(
-                        "INSERT INTO events (source, title, event_date_raw, raw_id) "
-                        "VALUES (%s, %s, %s, %s)",
+                        """
+                        INSERT INTO events (source, title, event_type,
+                        event_date, location, raw_id)
+                        VALUES (%s, %s, %s, %s, %s, %s)""",
                         (
-                            "archipop",
-                            "Programmation Image",
-                            raw_text,
+                            SOURCE_NAME,
+                            artist,
+                            event_type,
+                            date,
+                            "Archi-Pop",
                             str(raw_doc["_id"]),
                         ),
                     )
-                    await pg_conn.commit()
-                print("🚀 Texte OCR stocké en base.")
-            else:
-                print("❌ L'OCR n'a rien renvoyé.")
+            await pg_conn.commit()
+        print(f"🚀 Terminé : {len(structured_events)} événements insérés.")
+
     finally:
         mongo_client.close()
         await pg_conn.close()
