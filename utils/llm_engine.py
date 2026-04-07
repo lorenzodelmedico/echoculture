@@ -5,6 +5,7 @@ from typing import Any
 
 
 def extract_events_with_llm(raw_text: str) -> Any:
+    raw_output = ""
     url = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
 
     prompt = f"""[INST] Extract the concerts from this OCR text into a JSON list.
@@ -21,12 +22,13 @@ def extract_events_with_llm(raw_text: str) -> Any:
         "format": "json",
         "options": {
             "temperature": 0,
-            "num_ctx": 4096,  # On s'assure qu'il a assez de mémoire pour tout le texte
+            "num_ctx": 4096,  # memory
         },
     }
 
     try:
         response = requests.post(url, json=payload, timeout=60)
+        response.raise_for_status()
         result = response.json()
         raw_output = result.get("response", "")
 

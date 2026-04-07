@@ -10,6 +10,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def run_bronze_scraping():
+    asyncio.run(run_bronze_extraction())
+
+
 async def run_bronze_extraction():
     """
     COUCHE BRONZE - Extraction brute de la page d'accueil d'Archi-Pop
@@ -50,4 +54,4 @@ async def run_bronze_extraction():
 
 
 if __name__ == "__main__":
-    asyncio.run(run_bronze_extraction())
+    run_bronze_scraping()

@@ -6,19 +6,20 @@ services:
     image: postgres:16-alpine
     container_name: echoculture_pg
     environment:
-      POSTGRES_USER=${POSTGRES_USER}
-      POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      POSTGRES_DB=${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
 
   adminer:
     image: adminer:latest
     container_name: echoculture_adminer
     ports:
-      - "8080:8080"
+      - "8082:8080"
     depends_on:
       - db_postgres
 
@@ -47,6 +48,65 @@ services:
     depends_on:
       - db_mongodb
 
+  airflow-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_db_data:/var/lib/postgresql/data
+
+  airflow-webserver:
+    build: .
+    user: root
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - airflow-db
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./scrapers:/opt/airflow/scrapers
+      - ./utils:/opt/airflow/utils
+      - ./logs:/opt/airflow/logs
+    environment:
+      LOAD_EX: "False"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__WEBSERVER__SECRET_KEY: secretkey123
+      PYTHONPATH: /opt/airflow
+    ports:
+      - "8080:8080"
+    command: >
+      bash -c "airflow db migrate &&
+      airflow users create --username admin --firstname admin --lastname admin --role Admin --email admin@example.com --password admin &&
+      airflow webserver"
+
+  airflow-scheduler:
+    build: .
+    user: root
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - airflow-db
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./scrapers:/opt/airflow/scrapers
+      - ./utils:/opt/airflow/utils
+      - ./logs:/opt/airflow/logs
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__WEBSERVER__SECRET_KEY: secretkey123
+      PYTHONPATH: /opt/airflow
+    command: scheduler
+
 volumes:
   pg_data:
   mongo_data:
+  airflow_db_data:
+  ##  On ajoute la partie Airflow light pour l'orchestration

@@ -12,3 +12,6 @@ poetry.lock
 
 # OS
 .DS_Store
+
+#Logs
+*.log

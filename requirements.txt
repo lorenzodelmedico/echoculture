@@ -1,0 +1,29 @@
+# --- Bases de données ---
+sqlalchemy==1.4.52
+psycopg[binary]==3.3.3
+psycopg2-binary==2.9.11
+motor==3.7.1
+pymongo==4.16.0
+
+# --- Scraping & Traitement ---
+beautifulsoup4==4.14.3
+requests==2.33.1
+dateparser==1.4.0
+python-dotenv==1.2.2
+pytesseract==0.3.13
+pillow==12.2.0
+
+# --- Utilitaires ---
+python-dateutil==2.9.0.post0
+pytz==2026.1.post1
+tzlocal==5.3.1
+certifi==2026.2.25
+charset-normalizer==3.4.6
+idna==3.11
+urllib3==2.6.3
+
+# --- Validation (Versions compatibles Airflow 2.10) ---
+pydantic==2.12.5
+pydantic-core==2.41.5
+annotated-types==0.7.0
+typing-extensions==4.15.0
