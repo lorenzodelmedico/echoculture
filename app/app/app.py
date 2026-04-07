@@ -38,14 +38,11 @@ def event_card(ev: Event):
                             rx.text(
                                 ev.location,
                                 size="2",
-                                color="blue",
-                                cursor="pointer",
+                                color_scheme="blue",
                                 text_decoration="underline",
                             ),
-                            href=(
-                                "https://www.google.com/maps/search/?api=1&query="
-                                f"{ev.location or ''}"
-                            ),
+                            href="https://www.google.com/maps/search/?api=1&query="
+                            + rx.Var.create(ev.location).to(str),
                             is_external=True,
                         ),
                         rx.text("Lieu inconnu", size="2", color="gray"),
@@ -73,7 +70,7 @@ def index() -> rx.Component:
                 rx.select(
                     State.unique_types,  # Dynamique depuis la DB
                     value=State.selected_type,
-                    on_change=State.set_selected_type,
+                    on_change=State.set_type,
                     variant="surface",
                 ),
                 rx.button(
