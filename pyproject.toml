@@ -6,7 +6,7 @@ authors = [
     {name = "lorenzodelmedico@gmail.com"}
 ]
 license = "MIT"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<4.0"
 dependencies = [
     "fastapi (>=0.135.3,<0.136.0)",
     "uvicorn (>=0.42.0,<0.43.0)",
@@ -19,7 +19,9 @@ dependencies = [
     "dateparser (>=1.4.0,<2.0.0)",
     "psycopg[binary] (>=3.3.3,<4.0.0)",
     "pillow (>=12.2.0,<13.0.0)",
-    "pytesseract (>=0.3.13,<0.4.0)"
+    "pytesseract (>=0.3.13,<0.4.0)",
+    "reflex (>=0.8.28.post1,<0.9.0)",
+    "unzip (>=1.0.0,<2.0.0)"
 ]
 
 
