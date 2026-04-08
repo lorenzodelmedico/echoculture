@@ -111,5 +111,29 @@ def index() -> rx.Component:
     )
 
 
-app = rx.App(theme=rx.theme(appearance="dark", accent_color="violet"))
+app = rx.App(
+    theme=rx.theme(appearance="dark", accent_color="violet"),
+    head_components=[
+        # PWA manifest
+        rx.el.link(rel="manifest", href="/manifest.json"),
+        # Theme
+        rx.el.meta(name="theme-color", content="#000000"),
+        # iOS support
+        rx.el.meta(name="apple-mobile-web-app-capable", content="yes"),
+        rx.el.meta(
+            name="apple-mobile-web-app-status-bar-style", content="black-translucent"
+        ),
+        rx.el.meta(name="apple-mobile-web-app-title", content="EchoCulture"),
+        # Viewport
+        rx.el.meta(name="viewport", content="width=device-width, initial-scale=1.0"),
+        # Icons
+        rx.el.link(rel="apple-touch-icon", href="/icon-192.png"),
+        # Register service worker
+        rx.el.script("""
+            if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js');
+            }
+        """),
+    ],
+)
 app.add_page(index)

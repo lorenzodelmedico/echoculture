@@ -1,0 +1,11 @@
+# On autorise tout par défaut
+!pyproject.toml
+!poetry.lock
+!rxconfig.py
+!app/
+
+# On ignore uniquement les dossiers lourds de dev
+.venv/
+__pycache__/
+.web/
+.pytest_cache/

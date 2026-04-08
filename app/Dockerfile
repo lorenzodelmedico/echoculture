@@ -1,11 +1,17 @@
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY . .
 
-RUN pip install poetry && poetry install
+RUN apt-get update && apt-get install -y curl unzip && rm -rf /var/lib/apt/lists/*
+RUN pip install poetry
 
-# Reflex a besoin de ces ports
+COPY pyproject.toml poetry.lock* /app/
+
+RUN poetry config virtualenvs.create false \
+    && poetry install --no-interaction --no-ansi
+
+COPY app/ /app/
+
 EXPOSE 3000 8000
 
-CMD ["poetry", "run", "reflex", "run", "--env", "prod"]
+CMD ["reflex", "run", "--env", "prod"]

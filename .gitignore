@@ -15,3 +15,8 @@ poetry.lock
 
 #Logs
 *.log
+
+
+#app
+.ngrok.yml
+ngrok.yml
