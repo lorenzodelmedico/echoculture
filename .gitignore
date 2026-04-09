@@ -14,8 +14,8 @@ poetry.lock
 .DS_Store
 
 #Logs
+logs/
 *.log
-
 
 #app
 .ngrok.yml

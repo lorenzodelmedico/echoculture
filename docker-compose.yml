@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Base de données pour les données propres (Relational)
   db_postgres:
@@ -109,6 +107,8 @@ services:
       context: .
       dockerfile: app/Dockerfile
     container_name: echoculture-ui
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "3000:3000"
       - "8000:8000"
@@ -118,7 +118,17 @@ services:
     depends_on:
       - db_postgres
     restart: always
+
+  ollama:
+    image: ollama/ollama
+    container_name: echoculture_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: always
 volumes:
   pg_data:
   mongo_data:
   airflow_db_data:
+  ollama_data:
