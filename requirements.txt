@@ -8,6 +8,7 @@ pymongo==4.16.0
 # --- Scraping & Traitement ---
 beautifulsoup4==4.14.3
 requests==2.33.1
+playwright>=1.44.0
 dateparser==1.4.0
 python-dotenv==1.2.2
 pytesseract==0.3.13

@@ -8,7 +8,6 @@ import pytesseract
 def extract_text_from_url(img_url: str, lang: str = "fra") -> str:
     """
     Télécharge une image depuis une URL et extrait le texte via Tesseract.
-    Modulaire et réutilisable.
     """
     try:
         print(f"[OCR] Téléchargement : {img_url}")

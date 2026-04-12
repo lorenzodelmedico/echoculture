@@ -103,20 +103,35 @@ services:
       PYTHONPATH: /opt/airflow
     command: scheduler
   echoculture-ui:
-    build:
-      context: .
-      dockerfile: app/Dockerfile
-    container_name: echoculture-ui
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "3000:3000"
-      - "8000:8000"
+      build:
+        context: .
+        dockerfile: app/Dockerfile
+        args:
+          - API_URL=${API_URL}
+      container_name: echoculture-ui
+      extra_hosts:
+        - "host.docker.internal:host-gateway"
+      ports:
+        - "3000:3000"
+        - "8000:8000"
+      environment:
+        - API_URL=${API_URL}
+        - NGROK_BACKEND_URL=${NGROK_BACKEND_URL}
+        - FRONTEND_URL=${FRONTEND_URL}
+        - POSTGRES_URL=${POSTGRES_URL}
+        - OLLAMA_URL=${OLLAMA_URL}
+      depends_on:
+        - db_postgres
+      restart: always
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: echoculture_ngrok
+    command: http echoculture-ui:3000 --url=wrongfully-grizzled-janina.ngrok-free.dev --host-header=rewrite
     environment:
-      - NGROK_BACKEND_URL=${NGROK_BACKEND_URL}
-      - POSTGRES_URL=${POSTGRES_URL}
+      NGROK_AUTHTOKEN: ${NGROK_TOKEN}
     depends_on:
-      - db_postgres
+      - echoculture-ui
     restart: always
 
   ollama:

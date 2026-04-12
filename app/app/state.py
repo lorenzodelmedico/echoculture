@@ -1,38 +1,91 @@
 import reflex as rx
-from .models import Event, EventGroup  # On garde tes imports
+from .models import Event, EventGroup, Movie, MovieGroup, SearchResult
 from sqlmodel import select
 import itertools
+from datetime import date
 
 
 class State(rx.State):
+    active_tab: str = "concerts"  # "concerts" | "films"
     events: list[Event] = []
-    selected_type: str = "All"
+    movies: list[Movie] = []
+    selected_family: str = "All"
+    selected_city: str = "All"
+    selected_genre: str = "All"
+    search_query: str = ""
 
-    def set_type(self, value: str):
-        self.selected_type = value
+    def set_tab(self, tab: str):
+        self.active_tab = tab
+
+    def go_concerts(self):
+        self.active_tab = "concerts"
+        return rx.redirect("/")
+
+    def go_films(self):
+        self.active_tab = "films"
+        return rx.redirect("/")
+
+    def set_family(self, value: str):
+        self.selected_family = value
+
+    def set_city(self, value: str):
+        self.selected_city = value
+
+    def set_genre(self, value: str):
+        self.selected_genre = value
+
+    def set_search(self, value: str):
+        self.search_query = value
 
     def load_events(self):
         with rx.session() as session:
-            statement = select(Event).order_by(Event.event_date)
-            self.events = session.exec(statement).all()
+            self.events = session.exec(select(Event).order_by(Event.event_date)).all()
+            self.movies = session.exec(select(Movie).order_by(Movie.release_date)).all()
 
     @rx.var
-    def unique_types(self) -> list[str]:
-        """Génère la liste des filtres dynamiquement depuis la DB."""
-        # On extrait les types, on enlève les doublons et on trie
-        db_types = sorted(list(set(e.event_type for e in self.events)))
-        return ["All"] + db_types
+    def unique_families(self) -> list[str]:
+        families = sorted(
+            list(set(e.genre_family for e in self.events if e.genre_family))
+        )
+        return ["All"] + families
+
+    @rx.var
+    def unique_cities(self) -> list[str]:
+        cities = sorted(
+            list(
+                set(
+                    e.city_computed
+                    for e in self.events
+                    if e.city_computed and e.city_computed != "Autre"
+                )
+            )
+        )
+        return ["All"] + cities
+
+    @rx.var
+    def unique_genres(self) -> list[str]:
+        genres = set()
+        for m in self.movies:
+            if m.genres:
+                # Handle comma or pipe-separated genres
+                for g in m.genres.replace(" | ", ",").split(","):
+                    genre = g.strip()
+                    if genre:
+                        genres.add(genre)
+        return ["All"] + sorted(list(genres))
 
     @rx.var
     def grouped_events_list(self) -> list[EventGroup]:
         if not self.events:
             return []
 
-        filtered = (
-            self.events
-            if self.selected_type == "All"
-            else [e for e in self.events if e.event_type == self.selected_type]
-        )
+        current_year = date.today().year
+
+        filtered = self.events
+        if self.selected_family != "All":
+            filtered = [e for e in filtered if e.genre_family == self.selected_family]
+        if self.selected_city != "All":
+            filtered = [e for e in filtered if e.city_computed == self.selected_city]
 
         sorted_events = sorted(filtered, key=lambda x: x.event_date)
 
@@ -40,10 +93,94 @@ class State(rx.State):
         for date_obj, group in itertools.groupby(
             sorted_events, key=lambda x: x.event_date
         ):
+            # Add year to the label only when the event is not in the current year
+            if date_obj.year != current_year:
+                label = date_obj.strftime("%A %d %B %Y").capitalize()
+            else:
+                label = date_obj.strftime("%A %d %B").capitalize()
             res.append(
                 EventGroup(
-                    date_display=date_obj.strftime("%A %d %B").capitalize(),
+                    date_display=label,
                     events=list(group),
                 )
             )
         return res
+
+    @rx.var
+    def grouped_movies_list(self) -> list[MovieGroup]:
+        if not self.movies:
+            return []
+        current_year = date.today().year
+
+        filtered = self.movies
+        if self.selected_genre != "All":
+            filtered = [
+                m for m in filtered if m.genres and self.selected_genre in m.genres
+            ]
+
+        res = []
+        for date_obj, group in itertools.groupby(
+            [m for m in filtered if m.release_date],
+            key=lambda m: m.release_date,
+        ):
+            if date_obj.year != current_year:
+                label = date_obj.strftime("%A %d %B %Y").capitalize()
+            else:
+                label = date_obj.strftime("%A %d %B").capitalize()
+            res.append(MovieGroup(date_display=label, movies=list(group)))
+        return res
+
+    @rx.var
+    def search_results(self) -> list[SearchResult]:
+        """Search events and movies by title, ranked by match quality."""
+        if not self.search_query.strip():
+            return []
+
+        query_lower = self.search_query.lower().strip()
+        results = []
+
+        # Search events
+        for event in self.events:
+            title_lower = event.title.lower()
+            score = 0
+            if title_lower == query_lower:
+                score = 100  # Exact match
+            elif title_lower.startswith(query_lower):
+                score = 80  # Starts with
+            elif query_lower in title_lower:
+                score = 60  # Contains
+
+            if score > 0:
+                results.append(
+                    SearchResult(
+                        type="event",
+                        title=event.title,
+                        score=score,
+                        event=event,
+                    )
+                )
+
+        # Search movies
+        for movie in self.movies:
+            title_lower = movie.title.lower()
+            score = 0
+            if title_lower == query_lower:
+                score = 100
+            elif title_lower.startswith(query_lower):
+                score = 80
+            elif query_lower in title_lower:
+                score = 60
+
+            if score > 0:
+                results.append(
+                    SearchResult(
+                        type="movie",
+                        title=movie.title,
+                        score=score,
+                        movie=movie,
+                    )
+                )
+
+        # Sort by score (highest first), then by title
+        results.sort(key=lambda x: (-x.score, x.title))
+        return results

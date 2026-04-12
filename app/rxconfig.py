@@ -12,9 +12,11 @@ if "db_postgres" in raw_url and not os.path.exists("/.dockerenv"):
 
 config = rx.Config(
     app_name="app",
+    title="SynkOS",
     db_url=db_url,
     env=rx.Env.PROD,
     backend_port=8000,
     frontend_port=3000,
     api_url=os.getenv("NGROK_BACKEND_URL", "https://placeholder.ngrok-free.app"),
+    show_built_with_reflex=False,
 )

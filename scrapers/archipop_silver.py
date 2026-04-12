@@ -1,5 +1,6 @@
 import os
 import asyncio
+import hashlib
 import psycopg
 from motor.motor_asyncio import AsyncIOMotorClient
 from bs4 import BeautifulSoup
@@ -75,18 +76,23 @@ async def run_silver_transformation():
                     event_type = ev.get("type", "EVENT")
                     date = ev.get("date")
 
+                    signature = hashlib.md5(
+                        f"{SOURCE_NAME}{artist}{date}".encode()
+                    ).hexdigest()
+
                     print(f"📌 Gold : {date} | {artist} ({event_type})")
                     await cur.execute(
                         """
-                        INSERT INTO events (source, title, event_type,
+                        INSERT INTO events (signature, source, title, event_type,
                         event_date, location, raw_id)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (source, title, event_date)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (signature)
                         DO UPDATE SET
                             event_type = EXCLUDED.event_type,
                             raw_id = EXCLUDED.raw_id;
                         """,
                         (
+                            signature,
                             SOURCE_NAME,
                             artist,
                             event_type,

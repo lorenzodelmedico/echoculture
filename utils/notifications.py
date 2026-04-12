@@ -3,37 +3,31 @@ import os
 
 
 def send_discord_alert(context):
-    # Récupération des infos de l'échec
     ti = context.get("task_instance")
-    dag_id = ti.dag_id
-    task_id = ti.task_id
-    log_url = ti.log_url
-    execution_date = context.get("execution_date").strftime("%Y-%m-%d %H:%M")
+    # On récupère l'URL publique définie dans le .env
+    base_url = os.getenv("AIRFLOW_PUBLIC_URL", "http://localhost:8080")
 
-    # Message formaté pour Discord (Markdown)
+    # On génère le lien correct vers les logs
+    log_url = ti.log_url.replace("http://localhost:8080", base_url)
+
     payload = {
-        "content": "🚨 **ALERTE : ÉCHEC DE TÂCHE AIRFLOW** 🚨",
+        "content": "🚨 **ALERTE ÉCHEC PIPELINE**",
         "embeds": [
             {
-                "title": f"DAG: {dag_id}",
-                "color": 15158332,  # Rouge
+                "title": f"DAG: {ti.dag_id}",
+                "color": 15158332,
                 "fields": [
-                    {"name": "Tâche", "value": task_id, "inline": True},
-                    {"name": "Date", "value": execution_date, "inline": True},
-                    {
-                        "name": "Logs",
-                        "value": f"[Cliquer ici pour voir les logs]({log_url})",
-                    },
+                    {"name": "Tâche", "value": ti.task_id, "inline": True},
+                    {"name": "Logs", "value": f"[Voir les logs Airflow]({log_url})"},
                 ],
-                "footer": {"text": "EchoCulture Pipeline Monitoring"},
+                "footer": {"text": "SynkOS 2026"},
             }
         ],
     }
 
-    # Ton URL Discord Webhook
     webhook_url = os.getenv("URL_WEBHOOK_DIDI")
-
-    try:
-        requests.post(webhook_url, json=payload, timeout=10)
-    except Exception as e:
-        print(f"Impossible d'envoyer l'alerte Discord : {e}")
+    if webhook_url:
+        try:
+            requests.post(webhook_url, json=payload, timeout=5)
+        except Exception as e:
+            print(f"Erreur Discord: {e}")
