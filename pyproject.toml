@@ -37,6 +37,11 @@ line-length = 88
 target-version = ['py312']
 include = '\.pyi?$'
 
+[tool.pytest.ini_options]
+markers = [
+    "integration: hits real external APIs — skipped in normal CI runs",
+]
+
 [tool.mypy]
 python_version = "3.12"
 warn_return_any = true
@@ -49,5 +54,6 @@ dev = [
     "mypy (>=1.20.0,<2.0.0)",
     "flake8 (>=7.3.0,<8.0.0)",
     "pre-commit (>=4.5.1,<5.0.0)",
-    "types-requests (>=2.33.0.20260408,<3.0.0.0)"
+    "types-requests (>=2.33.0.20260408,<3.0.0.0)",
+    "pytest (>=9.0.3,<10.0.0)"
 ]

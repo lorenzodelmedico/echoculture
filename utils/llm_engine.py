@@ -1,12 +1,16 @@
+import logging
 import requests
 import json
 import os
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 
 def extract_events_with_llm(raw_text: str) -> Any:
     raw_output = ""
     url = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
+    model = os.getenv("LLM_MODEL", "mistral")
 
     prompt = f"""[INST] Extract the concerts from this OCR text into a JSON list.
     Use year 2026. April is month 04.
@@ -16,13 +20,13 @@ def extract_events_with_llm(raw_text: str) -> Any:
     {raw_text} [/INST]"""
 
     payload = {
-        "model": "mistral",
+        "model": model,
         "prompt": prompt,
         "stream": False,
         "format": "json",
         "options": {
             "temperature": 0,
-            "num_ctx": 4096,  # memory
+            "num_ctx": 4096,
         },
     }
 
@@ -33,13 +37,12 @@ def extract_events_with_llm(raw_text: str) -> Any:
         raw_output = result.get("response", "")
 
         data = json.loads(raw_output)
-        # print(raw_output)
         if isinstance(data, dict):
             if "concerts" in data:
                 return data["concerts"]
             if "events" in data:
                 return data["events"]
-            return [data]  # Un seul objet
+            return [data]
 
         if isinstance(data, list):
             return data
@@ -47,6 +50,6 @@ def extract_events_with_llm(raw_text: str) -> Any:
         return []
 
     except Exception as e:
-        print(f"❌ Erreur parsing : {e}")
-        print(f"CONTENU REÇU : {raw_output[:100]}...")
+        logger.error(f"Erreur parsing LLM : {e}")
+        logger.debug(f"Contenu reçu : {raw_output[:100]}...")
         return []

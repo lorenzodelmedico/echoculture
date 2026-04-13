@@ -5,6 +5,23 @@ import itertools
 from datetime import date
 
 
+def _score_title(query_lower: str, title: str) -> int:
+    t = title.lower()
+    if t == query_lower:
+        return 100
+    if t.startswith(query_lower):
+        return 80
+    if query_lower in t:
+        return 60
+    return 0
+
+
+def _score_location(query_lower: str, location: str) -> int:
+    if query_lower in location.lower():
+        return 40
+    return 0
+
+
 class State(rx.State):
     active_tab: str = "concerts"  # "concerts" | "films"
     events: list[Event] = []
@@ -132,24 +149,18 @@ class State(rx.State):
 
     @rx.var
     def search_results(self) -> list[SearchResult]:
-        """Search events and movies by title, ranked by match quality."""
         if not self.search_query.strip():
             return []
 
         query_lower = self.search_query.lower().strip()
         results = []
 
-        # Search events
         for event in self.events:
-            title_lower = event.title.lower()
-            score = 0
-            if title_lower == query_lower:
-                score = 100  # Exact match
-            elif title_lower.startswith(query_lower):
-                score = 80  # Starts with
-            elif query_lower in title_lower:
-                score = 60  # Contains
-
+            score = max(
+                _score_title(query_lower, event.title),
+                _score_location(query_lower, event.location or ""),
+                _score_location(query_lower, event.city_computed or ""),
+            )
             if score > 0:
                 results.append(
                     SearchResult(
@@ -160,17 +171,8 @@ class State(rx.State):
                     )
                 )
 
-        # Search movies
         for movie in self.movies:
-            title_lower = movie.title.lower()
-            score = 0
-            if title_lower == query_lower:
-                score = 100
-            elif title_lower.startswith(query_lower):
-                score = 80
-            elif query_lower in title_lower:
-                score = 60
-
+            score = _score_title(query_lower, movie.title)
             if score > 0:
                 results.append(
                     SearchResult(
@@ -181,6 +183,5 @@ class State(rx.State):
                     )
                 )
 
-        # Sort by score (highest first), then by title
         results.sort(key=lambda x: (-x.score, x.title))
         return results

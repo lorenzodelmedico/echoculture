@@ -5,12 +5,10 @@ import logging
 import os
 from datetime import datetime
 from pymongo import MongoClient
-import psycopg2
 from psycopg2.extras import execute_values
+from utils.db import pg_connection
 
-# --- CONFIG DEPUIS TON .env ---
-MONGO_URI = os.getenv("MONGO_URL", "mongodb://admin:mongopassword@db_mongodb:27017/")
-PG_URL = os.getenv("POSTGRES_URL")
+MONGO_URI = os.getenv("MONGO_URL")
 
 KNOWN_CITIES = [
     "Bordeaux",
@@ -61,16 +59,14 @@ GENRE_FAMILY_MAP = {
 
 
 def get_genre_family(genre: str) -> str:
-    return GENRE_FAMILY_MAP.get(genre, genre)  # unknown genres map to themselves
+    return GENRE_FAMILY_MAP.get(genre, genre)
 
 
 def hash_payload(data):
-    """Génère un hash MD5 du payload JSON complet pour détecter les changements."""
     return hashlib.md5(json.dumps(data, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def extract_city(location_str):
-    """Déduit la ville à partir de la chaîne de caractères du lieu."""
     if not location_str:
         return "Autre"
     for city in KNOWN_CITIES:
@@ -80,12 +76,11 @@ def extract_city(location_str):
 
 
 def generate_signature(title, date_iso, location):
-    """Crée l'ID unique (signature) pour éviter les doublons dans Postgres."""
     raw = f"{title}{date_iso}{location}".lower().strip().replace(" ", "")
     return hashlib.md5(raw.encode()).hexdigest()
 
 
-SCRAPE_MONTHS_AHEAD = 12  # Fenêtre de scraping en mois
+SCRAPE_MONTHS_AHEAD = 12
 
 
 def process_bdxc():
@@ -113,14 +108,13 @@ def process_bdxc():
 
     logging.info(f"Scraping BDXC du {today} au {end_date}...")
     try:
-        response = requests.get(API_URL, headers=HEADERS, params=params, timeout=30)
+        response = requests.get(API_URL, headers=HEADERS, params=params, timeout=60)
         response.raise_for_status()
         payload = response.json()
     except Exception as e:
         logging.error(f"Erreur lors de l'appel API BDXC: {e}")
-        return
+        raise
 
-    # L'API renvoie {"events": [...], "hasMore": bool}
     if isinstance(payload, dict):
         events = (
             payload.get("events")
@@ -128,21 +122,18 @@ def process_bdxc():
             or payload.get("representations")
             or []
         )
-    elif isinstance(payload, list):
-        events = payload
     else:
         logging.error(f"Format inattendu : {type(payload)}")
-        return
+        raise RuntimeError(f"Format API BDXC inattendu : {type(payload)}")
 
     if not isinstance(events, list):
         logging.error(f"Impossible d'extraire une liste : {type(events)}")
-        return
+        raise RuntimeError("Liste d'événements introuvable dans la réponse BDXC")
 
     logging.info(
         f"{len(events)} événements reçus ({today} → {end_date}). Traitement en cours..."
     )
 
-    # --- 2. LOGIQUE BRONZE (MONGODB) ---
     mongo_client = MongoClient(MONGO_URI)
     db = mongo_client["echoculture_bronze"]
     col_raw = db["bdxc_events_raw"]
@@ -151,27 +142,21 @@ def process_bdxc():
     current_hash = hash_payload(events)
     last_sync = col_sync.find_one(sort=[("timestamp", -1)])
 
-    # Stop intelligent : si le hash est identique, on coupe le pipeline
     if last_sync and last_sync.get("payload_hash") == current_hash:
         logging.info(
             "Aucune modification BDXC détectée depuis le dernier run. Fin du pipeline."
         )
         return
 
-    # Si c'est nouveau, on sauvegarde la donnée brute dans Mongo
-    # NOTE: le hash n'est enregistré qu'APRÈS le succès Postgres pour éviter
-    # qu'un crash Postgres bloque tous les runs suivants sans rien écrire.
     today_str = datetime.utcnow().isoformat()
     col_raw.insert_one({"timestamp": today_str, "events": events})
     logging.info(
         f"Nouveau payload BDXC détecté (Hash: {current_hash}). Traitement en cours..."
     )
 
-    # --- 3. LOGIQUE SILVER (POSTGRESQL) ---
     silver_events = []
 
     for ev in events:
-        # SÉCURITÉ : On vérifie que chaque événement est un dictionnaire
         if not isinstance(ev, dict):
             logging.warning(
                 f"Événement ignoré (pas un dict) : {type(ev)} — {str(ev)[:80]}"
@@ -180,9 +165,7 @@ def process_bdxc():
 
         venue = ev.get("venue") or ""
         city_raw = ev.get("location") or ""
-        loc = venue  # nom du lieu pour l'affichage
-        # location API = ville (Bordeaux, Pessac…) ; si vide → Bordeaux par défaut
-        # (toute la base est dept=33, majorité Bordeaux)
+        loc = venue
         city = extract_city(city_raw) if city_raw else "Bordeaux"
         title = ev.get("title", "Sans titre")
         start_date = ev.get("startDate")
@@ -191,8 +174,8 @@ def process_bdxc():
             continue
 
         sig = generate_signature(title, start_date, loc)
-        event_type = ev.get("primaryStyleName") or "Concert"  # specific genre
-        genre_family = get_genre_family(event_type)  # grouped family
+        event_type = ev.get("primaryStyleName") or "Concert"
+        genre_family = get_genre_family(event_type)
         url_billetterie = ev.get("ticketingUrl")
         raw_id = str(ev.get("id", ""))
 
@@ -216,40 +199,38 @@ def process_bdxc():
         logging.warning("Aucun événement valide à insérer après filtrage.")
         return
 
+    query = """
+        INSERT INTO events
+            (signature, source, title, event_type,
+             genre_family, event_date, event_date_raw,
+             location, city_computed,
+             url_billetterie, raw_id)
+        VALUES %s
+        ON CONFLICT (signature) DO UPDATE SET
+            city_computed = EXCLUDED.city_computed,
+            url_billetterie = EXCLUDED.url_billetterie,
+            title = EXCLUDED.title,
+            event_type = EXCLUDED.event_type,
+            genre_family = EXCLUDED.genre_family,
+            location = EXCLUDED.location;
+    """
+
     try:
-        conn = psycopg2.connect(PG_URL)
-        cur = conn.cursor()
-
-        query = """
-            INSERT INTO events
-                (signature, source, title, event_type,
-                 genre_family, event_date, event_date_raw,
-                 location, city_computed,
-                 url_billetterie, raw_id)
-            VALUES %s
-            ON CONFLICT (signature) DO UPDATE SET
-                city_computed = EXCLUDED.city_computed,
-                url_billetterie = EXCLUDED.url_billetterie,
-                title = EXCLUDED.title,
-                event_type = EXCLUDED.event_type,
-                genre_family = EXCLUDED.genre_family,
-                location = EXCLUDED.location;
-        """
-        execute_values(cur, query, silver_events)
-        conn.commit()
-        cur.close()
-        conn.close()
-
-        # Hash enregistré ICI seulement, après succès Postgres
-        col_sync.insert_one({"timestamp": today_str, "payload_hash": current_hash})
-        logging.info(
-            f"✅ Pipeline BDXC terminé. {len(silver_events)} "
-            "événements insérés/mis à jour dans Postgres."
-        )
-
+        with pg_connection() as conn:
+            cur = conn.cursor()
+            execute_values(cur, query, silver_events)
+            cur.close()
     except Exception as e:
         logging.error(f"Erreur fatale lors de l'insertion Postgres : {e}")
-        raise e  # Airflow marque la tâche FAILED, hash non enregistré → retry possible
+        raise
+
+    # NOTE: hash enregistré seulement après succès Postgres — si Postgres crash,
+    # le prochain run re-traite les données plutôt que de les ignorer silencieusement.
+    col_sync.insert_one({"timestamp": today_str, "payload_hash": current_hash})
+    logging.info(
+        f"✅ Pipeline BDXC terminé. {len(silver_events)} "
+        "événements insérés/mis à jour dans Postgres."
+    )
 
 
 if __name__ == "__main__":

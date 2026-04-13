@@ -4,10 +4,7 @@ import os
 
 def send_discord_alert(context):
     ti = context.get("task_instance")
-    # On récupère l'URL publique définie dans le .env
     base_url = os.getenv("AIRFLOW_PUBLIC_URL", "http://localhost:8080")
-
-    # On génère le lien correct vers les logs
     log_url = ti.log_url.replace("http://localhost:8080", base_url)
 
     payload = {

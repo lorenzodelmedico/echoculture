@@ -5,19 +5,19 @@ import re
 import time
 from datetime import datetime
 
-import psycopg2
 from psycopg2.extras import execute_values
 from bs4 import BeautifulSoup
 from pymongo import MongoClient
 import requests
 
-PG_URL = os.getenv("POSTGRES_URL")
-MONGO_URI = os.getenv("MONGO_URL", "mongodb://admin:mongopassword@db_mongodb:27017/")
+from utils.db import pg_connection
+
+MONGO_URI = os.getenv("MONGO_URL")
 CALENDAR_URL = "https://ecran-total.fr/calendrier/"
+HEADERS = {"User-Agent": "EchoCulture/1.0"}
 
 
 def parse_numeric_date(text: str):
-    """Parse a date string like '15/04/2026' → date object."""
     from datetime import date
 
     text = text.strip()
@@ -41,7 +41,6 @@ def hash_html(html: str) -> str:
 
 
 def fetch_html_with_playwright() -> str:
-    """Fetch ecran-total.fr/calendrier/ using Playwright to bypass Cloudflare."""
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
@@ -62,14 +61,11 @@ def fetch_html_with_playwright() -> str:
             locale="fr-FR",
         )
         page = context.new_page()
-        # Hide automation signals
         page.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
         page.goto(CALENDAR_URL, wait_until="domcontentloaded", timeout=60000)
-        # Give JS a moment to render content after DOM is ready
         page.wait_for_timeout(3000)
-        # Wait for actual content (not the Cloudflare challenge page)
         try:
             page.wait_for_selector("article, .film, .movie, .post, main", timeout=15000)
         except Exception:
@@ -80,16 +76,6 @@ def fetch_html_with_playwright() -> str:
 
 
 def parse_movies(html: str) -> list:
-    """Parse movie data from ecran-total.fr HTML.
-
-    Real structure (confirmed from live HTML dump):
-      - Date headers: <h2 class="date-separator ...">DD/MM/YYYY</h2>
-      - Film cards:   <div class="film-card production ...">
-          <a class="full" href="URL" title="TITLE">
-          <div class="titre extra-wide"><h3>TITLE</h3></div>
-          <p class="societe distributeur"><a>DISTRIBUTOR</a></p>
-          <p class="small status">STATUS</p>
-    """
     soup = BeautifulSoup(html, "html.parser")
     movies = []
     current_release_date = None
@@ -97,7 +83,6 @@ def parse_movies(html: str) -> list:
     for el in soup.find_all(["h2", "div"]):
         classes = el.get("class", [])
 
-        # --- Date header ---
         if el.name == "h2" and "date-separator" in classes:
             parsed = parse_numeric_date(el.get_text(strip=True))
             if parsed:
@@ -105,22 +90,18 @@ def parse_movies(html: str) -> list:
                 logging.info(f"📅 Date détectée : {current_release_date}")
             continue
 
-        # --- Film card ---
         if "film-card" not in classes:
             continue
 
-        # Title: <h3> inside .titre
         titre_div = el.find("div", class_="titre")
         title_el = titre_div.find("h3") if titre_div else None
         title = title_el.get_text(strip=True) if title_el else None
         if not title or len(title) < 2:
             continue
 
-        # URL: <a class="full">
         link_el = el.find("a", class_="full")
         url = link_el["href"] if link_el else None
 
-        # Distributor (stored in director field — closest available metadata)
         dist_p = el.find("p", class_="distributeur")
         distributor = None
         if dist_p:
@@ -136,7 +117,7 @@ def parse_movies(html: str) -> list:
         movies.append(
             {
                 "title": title,
-                "director": distributor,  # distributor mapped to director column
+                "director": distributor,
                 "producer": None,
                 "genres": None,
                 "synopsis": None,
@@ -150,107 +131,175 @@ def parse_movies(html: str) -> list:
     return movies
 
 
+_GENRE_KEYWORDS: dict[str, str] = {
+    "action": "Action",
+    "adventure": "Adventure",
+    "animated": "Animation",
+    "animation": "Animation",
+    "biographical": "Biography",
+    "biography": "Biography",
+    "comedy": "Comedy",
+    "crime": "Crime",
+    "documentary": "Documentary",
+    "drama": "Drama",
+    "fantasy": "Fantasy",
+    "historical": "History",
+    "horror": "Horror",
+    "musical": "Musical",
+    "mystery": "Mystery",
+    "romance": "Romance",
+    "romantic": "Romance",
+    "science fiction": "Science Fiction",
+    "sci-fi": "Science Fiction",
+    "sport": "Sport",
+    "sports": "Sport",
+    "superhero": "Superhero",
+    "thriller": "Thriller",
+    "war": "War",
+    "western": "Western",
+}
+
+_WIKI_FETCH_PARAMS: dict = {
+    "action": "query",
+    "prop": "categories|extracts",
+    "clshow": "!hidden",
+    "cllimit": "50",
+    "exintro": True,
+    "explaintext": True,
+    "exsectionformat": "plain",
+    "format": "json",
+}
+
+
+def _wiki_request(url: str, params: dict):
+    resp = requests.get(url, params=params, headers=HEADERS, timeout=10)
+    if resp.status_code == 429:
+        return {}
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _extract_genres(categories: list[str], intro: str) -> str | None:
+    found: list[str] = []
+    seen: set[str] = set()
+    for cat in categories:
+        cat_lower = cat.lower()
+        if "film" not in cat_lower:
+            continue
+        for keyword, label in sorted(_GENRE_KEYWORDS.items(), key=lambda x: -len(x[0])):
+            if keyword in cat_lower and label not in seen:
+                found.append(label)
+                seen.add(label)
+    if found:
+        return ", ".join(found)
+    match = re.search(r"\bis an?\s+(.{3,80})\s+film\b", intro, re.IGNORECASE)
+    if match:
+        phrase = match.group(1).lower()
+        for keyword, label in sorted(_GENRE_KEYWORDS.items(), key=lambda x: -len(x[0])):
+            if keyword in phrase and label not in seen:
+                found.append(label)
+                seen.add(label)
+    return ", ".join(found) if found else None
+
+
+def _fetch_en_genres(en_title: str) -> str | None:
+    try:
+        data = _wiki_request(
+            "https://en.wikipedia.org/w/api.php",
+            {"titles": en_title, **_WIKI_FETCH_PARAMS},
+        )
+        for page in data.get("query", {}).get("pages", {}).values():
+            cats = [
+                c["title"].replace("Category:", "") for c in page.get("categories", [])
+            ]
+            intro = page.get("extract", "")
+            return _extract_genres(cats, intro)
+    except requests.RequestException:
+        pass
+    return None
+
+
 def fetch_wikipedia_genres(title: str) -> str | None:
-    """Search Wikipedia for movie and extract genres from infobox.
-
-    Args:
-        title: Movie title to search on Wikipedia
-
-    Returns:
-        Comma-separated string of genres, or None if not found
-    """
     if not title or len(title) < 2:
         return None
 
     try:
-        # Search Wikipedia API for the movie
-        search_url = "https://en.wikipedia.org/w/api.php"
-        search_params = {
-            "action": "query",
-            "list": "search",
-            "srsearch": title,
-            "format": "json",
-            "srlimit": "5",
-        }
-        headers = {"User-Agent": "EchoCulture-Bot/1.0"}
-
-        response = requests.get(
-            search_url, params=search_params, headers=headers, timeout=10
+        data = _wiki_request(
+            "https://en.wikipedia.org/w/api.php",
+            {
+                "action": "query",
+                "list": "search",
+                "srsearch": f"{title} film",
+                "format": "json",
+                "srlimit": 1,
+            },
         )
-        response.raise_for_status()
-        search_results = response.json()
+        results = data.get("query", {}).get("search", [])
+        if results:
+            genres = _fetch_en_genres(results[0]["title"])
+            if genres:
+                return genres
+    except requests.RequestException:
+        pass
 
-        if not search_results.get("query", {}).get("search"):
-            logging.debug(f"No Wikipedia results for: {title}")
-            return None
-
-        # Get the first (most relevant) result
-        first_result = search_results["query"]["search"][0]
-        page_title = first_result["title"]
-
-        # Fetch the page content to extract genre from infobox
-        content_params = {
-            "action": "query",
-            "titles": page_title,
-            "prop": "extracts",
-            "format": "json",
-        }
-
-        content_response = requests.get(
-            search_url, params=content_params, headers=headers, timeout=10
+    try:
+        data = _wiki_request(
+            "https://fr.wikipedia.org/w/api.php",
+            {
+                "action": "query",
+                "list": "search",
+                "srsearch": title,
+                "format": "json",
+                "srlimit": 1,
+            },
         )
-        content_response.raise_for_status()
-        content_data = content_response.json()
-
-        pages = content_data.get("query", {}).get("pages", {})
-        if not pages:
+        results = data.get("query", {}).get("search", [])
+        if not results:
             return None
-
-        page = next(iter(pages.values()))
-        extract_html = page.get("extract", "")
-
-        # Parse HTML to find genre in infobox
-        soup = BeautifulSoup(extract_html, "html.parser")
-
-        # Look for infobox and genre field
-        # Wikipedia infoboxes have structure like:
-        # <th>Genre</th> followed by <td> with genre data
-        genre_text = None
-        for th in soup.find_all("th"):
-            if "genre" in th.get_text(strip=True).lower():
-                # Genre is usually in the next <td>
-                tr = th.find_parent("tr")
-                if tr:
-                    next_td = tr.find_next("td")
-                    if next_td:
-                        genre_text = next_td.get_text(strip=True)
-                        break
-                else:
-                    # Try finding next td in document
-                    td = th.find_next("td")
-                    if td:
-                        genre_text = td.get_text(strip=True)
-                        break
-
-        if genre_text:
-            # Clean up: remove citations [1], [2], etc., and extra whitespace
-            genre_text = re.sub(r"\[\d+\]", "", genre_text)
-            genre_text = re.sub(r"\s+", ", ", genre_text).strip()
-            # Remove trailing commas
-            genre_text = re.sub(r",\s*$", "", genre_text)
-            if genre_text:
-                logging.info(f"✓ Found on Wikipedia for '{title}': {genre_text}")
-                return genre_text
-
-        logging.debug(f"No genre found on Wikipedia for: {title}")
+        fr_title = results[0]["title"]
+    except requests.RequestException as e:
+        logging.warning(f"Wikipedia search failed for {title!r}: {e}")
         return None
 
-    except requests.exceptions.RequestException as e:
-        logging.warning(f"Failed to fetch Wikipedia data for '{title}': {e}")
+    try:
+        data = _wiki_request(
+            "https://fr.wikipedia.org/w/api.php",
+            {
+                "action": "query",
+                "prop": "langlinks|categories|extracts",
+                "lllang": "en",
+                "clshow": "!hidden",
+                "cllimit": "50",
+                "exintro": True,
+                "explaintext": True,
+                "exsectionformat": "plain",
+                "titles": fr_title,
+                "format": "json",
+            },
+        )
+        pages = data.get("query", {}).get("pages", {})
+    except requests.RequestException as e:
+        logging.warning(f"Wikipedia fetch failed for {fr_title!r}: {e}")
         return None
-    except Exception as e:
-        logging.warning(f"Error parsing Wikipedia genres for '{title}': {e}")
-        return None
+
+    for page in pages.values():
+        en_links = [
+            lk["*"] for lk in page.get("langlinks", []) if lk.get("lang") == "en"
+        ]
+        fr_cats = [
+            c["title"].replace("Catégorie:", "").replace("Category:", "")
+            for c in page.get("categories", [])
+        ]
+        fr_intro = page.get("extract", "")
+
+        if en_links:
+            genres = _fetch_en_genres(en_links[0])
+            if genres:
+                return genres
+
+        return _extract_genres(fr_cats, fr_intro)
+
+    return None
 
 
 def process_ecrantotal():
@@ -268,16 +317,6 @@ def process_ecrantotal():
             "Playwright a renvoyé la page de protection."
         )
 
-    # Dump HTML to mounted volume for structure inspection
-    debug_path = "/opt/airflow/logs/ecrantotal_debug.html"
-    try:
-        with open(debug_path, "w", encoding="utf-8") as f:
-            f.write(html)
-        logging.info(f"HTML dumped → {debug_path}")
-    except Exception as e:
-        logging.warning(f"Could not write debug HTML: {e}")
-
-    # MongoDB hash guard — skip if page unchanged since last run
     mongo_client = MongoClient(MONGO_URI)
     col_sync = mongo_client["echoculture_bronze"]["ecrantotal_sync_history"]
     current_hash = hash_html(html)
@@ -291,24 +330,52 @@ def process_ecrantotal():
 
     movies = parse_movies(html)
     if not movies:
-        raise RuntimeError(
-            "Aucun film parsé — voir "
-            "/opt/airflow/logs/ecrantotal_debug.html "
-            "pour inspecter la structure HTML."
-        )
+        log_dir = os.getenv("AIRFLOW_LOG_DIR", "/opt/airflow/logs")
+        debug_path = os.path.join(log_dir, "ecrantotal_debug.html")
+        try:
+            with open(debug_path, "w", encoding="utf-8") as f:
+                f.write(html)
+            logging.warning(f"Aucun film parsé — HTML dumped → {debug_path}")
+        except Exception:
+            pass
+        raise RuntimeError("Aucun film parsé — voir les logs pour inspecter le HTML.")
 
     logging.info(
         f"{len(movies)} films parsés. Extraction des genres depuis Wikipedia..."
     )
 
-    # Fetch genres from Wikipedia (with rate limiting)
-    for i, movie in enumerate(movies):
+    # Load genres from DB to skip re-hitting Wikipedia.
+    # Skip dirty values from the old wikitext approach (markup or French phrases).
+    existing_genres: dict[str, str] = {}
+    try:
+        with pg_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT title, genres FROM movies WHERE genres IS NOT NULL")
+            existing_genres = {
+                row[0]: row[1]
+                for row in cur.fetchall()
+                if "[[" not in row[1] and "film de" not in row[1].lower()
+            }
+            cur.close()
+    except Exception:
+        pass
+
+    needs_lookup = [m for m in movies if m["title"] not in existing_genres]
+    for m in movies:
+        if m["title"] in existing_genres:
+            m["genres"] = existing_genres[m["title"]]
+
+    logging.info(
+        f"{len(existing_genres)} genres récupérés depuis la DB, "
+        f"{len(needs_lookup)} films à chercher sur Wikipedia."
+    )
+
+    for i, movie in enumerate(needs_lookup):
         genres = fetch_wikipedia_genres(movie["title"])
         if genres:
             movie["genres"] = genres
-        # Rate limit: 0.5 seconds between requests to avoid overwhelming Wikipedia
-        if i < len(movies) - 1:  # Don't sleep after the last movie
-            time.sleep(0.5)
+        if i < len(needs_lookup) - 1:
+            time.sleep(1.5)
 
     logging.info("Genres extraction complète. Insertion dans Postgres...")
 
@@ -329,36 +396,36 @@ def process_ecrantotal():
             )
         )
 
+    query = """
+        INSERT INTO movies
+            (signature, title, director, producer,
+             genres, synopsis, release_date,
+             duration, url)
+        VALUES %s
+        ON CONFLICT (signature) DO UPDATE SET
+            director   = EXCLUDED.director,
+            producer   = EXCLUDED.producer,
+            genres     = COALESCE(EXCLUDED.genres, movies.genres),
+            synopsis   = EXCLUDED.synopsis,
+            duration   = EXCLUDED.duration,
+            url        = EXCLUDED.url;
+    """
+
     try:
-        conn = psycopg2.connect(PG_URL)
-        cur = conn.cursor()
-        query = """
-            INSERT INTO movies
-                (signature, title, director, producer,
-                 genres, synopsis, release_date,
-                 duration, url)
-            VALUES %s
-            ON CONFLICT (signature) DO UPDATE SET
-                director   = EXCLUDED.director,
-                producer   = EXCLUDED.producer,
-                genres     = EXCLUDED.genres,
-                synopsis   = EXCLUDED.synopsis,
-                duration   = EXCLUDED.duration,
-                url        = EXCLUDED.url;
-        """
-        execute_values(cur, query, rows)
-        conn.commit()
-        cur.close()
-        conn.close()
-        logging.info(f"✅ {len(rows)} films insérés/mis à jour dans Postgres.")
-        # Record hash only after successful Postgres write
-        col_sync.insert_one(
-            {"timestamp": datetime.utcnow().isoformat(), "payload_hash": current_hash}
-        )
-        logging.info(f"Hash Écran Total enregistré : {current_hash}")
+        with pg_connection() as conn:
+            cur = conn.cursor()
+            execute_values(cur, query, rows)
+            cur.close()
     except Exception as e:
         logging.error(f"Erreur Postgres : {e}")
         raise
+
+    logging.info(f"✅ {len(rows)} films insérés/mis à jour dans Postgres.")
+    # NOTE: hash enregistré seulement après succès Postgres
+    col_sync.insert_one(
+        {"timestamp": datetime.utcnow().isoformat(), "payload_hash": current_hash}
+    )
+    logging.info(f"Hash Écran Total enregistré : {current_hash}")
 
 
 if __name__ == "__main__":

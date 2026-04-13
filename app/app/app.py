@@ -87,11 +87,15 @@ def movie_card(m: Movie):
             rx.vstack(
                 rx.cond(
                     m.genres,
-                    rx.badge(
-                        m.genres,
-                        variant="soft",
-                        color_scheme="amber",
-                        radius="full",
+                    rx.hstack(
+                        rx.foreach(
+                            m.genres.split(", "),  # type: ignore[union-attr]
+                            lambda g: rx.badge(
+                                g, variant="soft", color_scheme="amber", radius="full"
+                            ),
+                        ),
+                        wrap="wrap",
+                        spacing="1",
                     ),
                     rx.box(),
                 ),
@@ -372,11 +376,10 @@ def sticky_header():
     )
 
 
-def day_section(day, card_fn):
-    """Reusable day group: sticky date label + responsive card grid."""
+def day_section(date_display, items, card_fn):
     return rx.vstack(
         rx.box(
-            rx.text(day.date_display, size="3", weight="bold", color="gray"),
+            rx.text(date_display, size="3", weight="bold", color="gray"),
             position="sticky",
             top=STICKY_TOP,
             z_index="40",
@@ -388,9 +391,7 @@ def day_section(day, card_fn):
         ),
         rx.box(
             rx.grid(
-                rx.foreach(
-                    day.events if hasattr(day, "events") else day.movies, card_fn
-                ),
+                rx.foreach(items, card_fn),
                 columns={"initial": "1", "sm": "2", "lg": "3"},
                 width="100%",
                 gap="3",
@@ -410,76 +411,14 @@ def day_section(day, card_fn):
 def concerts_view():
     return rx.foreach(
         State.grouped_events_list,
-        lambda day: rx.vstack(
-            rx.box(
-                rx.text(day.date_display, size="3", weight="bold", color="gray"),
-                position="sticky",
-                top=STICKY_TOP,
-                z_index="40",
-                background="rgba(10, 10, 10, 0.9)",
-                backdrop_filter="blur(8px)",
-                padding_top="1.5em",
-                padding_bottom="0.5em",
-                width="100%",
-            ),
-            rx.box(
-                rx.grid(
-                    rx.foreach(day.events, event_card),
-                    columns={"initial": "1", "sm": "2", "lg": "3"},
-                    width="100%",
-                    gap="3",
-                    align_items="stretch",
-                ),
-                padding_left={"initial": "1em", "md": "0"},
-                margin_left={"initial": "0.5em", "md": "0"},
-                border_left={
-                    "initial": "1px solid rgba(255,255,255,0.1)",
-                    "md": "none",
-                },
-                width="100%",
-            ),
-            width="100%",
-            align_items="start",
-            margin_bottom="1.5em",
-        ),
+        lambda day: day_section(day.date_display, day.events, event_card),
     )
 
 
 def films_view():
     return rx.foreach(
         State.grouped_movies_list,
-        lambda day: rx.vstack(
-            rx.box(
-                rx.text(day.date_display, size="3", weight="bold", color="gray"),
-                position="sticky",
-                top=STICKY_TOP,
-                z_index="40",
-                background="rgba(10, 10, 10, 0.9)",
-                backdrop_filter="blur(8px)",
-                padding_top="1.5em",
-                padding_bottom="0.5em",
-                width="100%",
-            ),
-            rx.box(
-                rx.grid(
-                    rx.foreach(day.movies, movie_card),
-                    columns={"initial": "1", "sm": "2", "lg": "3"},
-                    width="100%",
-                    gap="3",
-                    align_items="stretch",
-                ),
-                padding_left={"initial": "1em", "md": "0"},
-                margin_left={"initial": "0.5em", "md": "0"},
-                border_left={
-                    "initial": "1px solid rgba(255,255,255,0.1)",
-                    "md": "none",
-                },
-                width="100%",
-            ),
-            width="100%",
-            align_items="start",
-            margin_bottom="1.5em",
-        ),
+        lambda day: day_section(day.date_display, day.movies, movie_card),
     )
 
 
