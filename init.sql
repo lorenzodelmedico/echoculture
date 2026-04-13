@@ -12,7 +12,19 @@ CREATE TABLE IF NOT EXISTS events (
     url_billetterie TEXT,
     raw_id TEXT,
     genre_family TEXT,
+    source_url TEXT,
+    min_price FLOAT,
+    max_price FLOAT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS event_prices (
+    id               SERIAL PRIMARY KEY,
+    event_signature  VARCHAR(255) NOT NULL REFERENCES events(signature) ON DELETE CASCADE,
+    label            TEXT NOT NULL,
+    amount           FLOAT NOT NULL,
+    scraped_at       TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (event_signature, label)
 );
 
 CREATE TABLE IF NOT EXISTS movies (

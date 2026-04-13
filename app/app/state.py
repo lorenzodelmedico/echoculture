@@ -29,6 +29,7 @@ class State(rx.State):
     selected_family: str = "All"
     selected_city: str = "All"
     selected_genre: str = "All"
+    selected_price_range: str = "Tous"
     search_query: str = ""
 
     def set_tab(self, tab: str):
@@ -50,6 +51,9 @@ class State(rx.State):
 
     def set_genre(self, value: str):
         self.selected_genre = value
+
+    def set_price_range(self, value: str):
+        self.selected_price_range = value
 
     def set_search(self, value: str):
         self.search_query = value
@@ -103,6 +107,23 @@ class State(rx.State):
             filtered = [e for e in filtered if e.genre_family == self.selected_family]
         if self.selected_city != "All":
             filtered = [e for e in filtered if e.city_computed == self.selected_city]
+
+        if self.selected_price_range == "Gratuit":
+            filtered = [e for e in filtered if e.min_price == 0.0]
+        elif self.selected_price_range == "< 10€":
+            filtered = [
+                e for e in filtered if e.min_price is not None and e.min_price < 10
+            ]
+        elif self.selected_price_range == "10-20€":
+            filtered = [
+                e
+                for e in filtered
+                if e.min_price is not None and 10 <= e.min_price <= 20
+            ]
+        elif self.selected_price_range == "20€+":
+            filtered = [
+                e for e in filtered if e.min_price is not None and e.min_price > 20
+            ]
 
         sorted_events = sorted(filtered, key=lambda x: x.event_date)
 
@@ -185,3 +206,7 @@ class State(rx.State):
 
         results.sort(key=lambda x: (-x.score, x.title))
         return results
+
+    @rx.var
+    def has_price_data(self) -> bool:
+        return any(e.min_price is not None for e in self.events)

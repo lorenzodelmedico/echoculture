@@ -18,6 +18,18 @@ class Event(rx.Model, table=True):  # type: ignore
     url_billetterie: Optional[str]
     genre_family: Optional[str] = None
     raw_id: str
+    source_url: Optional[str] = None
+    min_price: Optional[float] = None
+    max_price: Optional[float] = None
+
+
+class EventPrice(rx.Model, table=True):  # type: ignore
+    __tablename__ = "event_prices"
+
+    id: Optional[int] = sqlmodel.Field(default=None, primary_key=True)
+    event_signature: str
+    label: str
+    amount: float
 
 
 class EventGroup(BaseModel):

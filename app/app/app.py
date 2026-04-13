@@ -9,8 +9,34 @@ def event_card(ev: Event):
         rx.vstack(
             # Top section: grows to fill available space
             rx.vstack(
-                rx.badge(
-                    ev.event_type, variant="soft", color_scheme="violet", radius="full"
+                rx.hstack(
+                    rx.badge(
+                        ev.event_type,
+                        variant="soft",
+                        color_scheme="violet",
+                        radius="full",
+                    ),
+                    rx.cond(
+                        ev.min_price == 0.0,
+                        rx.badge(
+                            "Gratuit",
+                            color_scheme="green",
+                            variant="soft",
+                            radius="full",
+                        ),
+                        rx.cond(
+                            ev.min_price,
+                            rx.badge(
+                                ev.min_price.to(int).to(str) + "€+",  # type: ignore[union-attr]  # noqa: E501
+                                color_scheme="blue",
+                                variant="soft",
+                                radius="full",
+                            ),
+                            rx.box(),
+                        ),
+                    ),
+                    spacing="1",
+                    wrap="wrap",
                 ),
                 rx.text(ev.title, size="3", weight="bold", color="white"),
                 rx.cond(
@@ -45,22 +71,36 @@ def event_card(ev: Event):
                 width="100%",
                 style={"flex": "1"},
             ),
-            # Bottom: ticket — always at same level across all cards
-            rx.cond(
-                ev.url_billetterie,
-                rx.link(
-                    rx.button(
-                        rx.icon("ticket", size=14),
-                        "Réserver",
-                        variant="surface",
-                        color_scheme="violet",
-                        size="1",
-                        radius="full",
+            # Bottom: ticket + BDXC link — always at same level across all cards
+            rx.hstack(
+                rx.cond(
+                    ev.url_billetterie,
+                    rx.link(
+                        rx.button(
+                            rx.icon("ticket", size=14),
+                            "Réserver",
+                            variant="surface",
+                            color_scheme="violet",
+                            size="1",
+                            radius="full",
+                        ),
+                        href=ev.url_billetterie.to(str),  # type: ignore[union-attr]
+                        is_external=True,
                     ),
-                    href=ev.url_billetterie.to(str),  # type: ignore[union-attr]
-                    is_external=True,
+                    rx.box(height="26px"),
                 ),
-                rx.box(height="26px"),  # same height as the button, keeps alignment
+                rx.cond(
+                    ev.source_url,
+                    rx.link(
+                        rx.icon("external-link", size=14, color="gray"),
+                        href=ev.source_url.to(str),  # type: ignore[union-attr]
+                        is_external=True,
+                        _hover={"opacity": "0.7"},
+                    ),
+                    rx.box(),
+                ),
+                spacing="2",
+                align_items="center",
             ),
             align_items="start",
             width="100%",
@@ -318,6 +358,19 @@ def sticky_header():
                         radius="full",
                         color_scheme="violet",
                         placeholder="Ville",
+                    ),
+                    rx.cond(
+                        State.has_price_data,
+                        rx.select(
+                            ["Tous", "Gratuit", "< 10€", "10-20€", "20€+"],
+                            value=State.selected_price_range,
+                            on_change=State.set_price_range,
+                            variant="soft",
+                            radius="full",
+                            color_scheme="green",
+                            placeholder="Prix",
+                        ),
+                        rx.box(),
                     ),
                     spacing="2",
                 ),

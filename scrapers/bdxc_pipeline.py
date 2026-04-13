@@ -7,6 +7,7 @@ from datetime import datetime
 from pymongo import MongoClient
 from psycopg2.extras import execute_values
 from utils.db import pg_connection
+from scrapers.bdxc_prices_pipeline import generate_bdxc_url
 
 MONGO_URI = os.getenv("MONGO_URL")
 
@@ -178,6 +179,9 @@ def process_bdxc():
         genre_family = get_genre_family(event_type)
         url_billetterie = ev.get("ticketingUrl")
         raw_id = str(ev.get("id", ""))
+        source_url = generate_bdxc_url(
+            ev.get("slug", ""), city_raw or "Bordeaux", start_date
+        )
 
         silver_events.append(
             (
@@ -192,6 +196,7 @@ def process_bdxc():
                 city,
                 url_billetterie,
                 raw_id,
+                source_url,
             )
         )
 
@@ -204,7 +209,7 @@ def process_bdxc():
             (signature, source, title, event_type,
              genre_family, event_date, event_date_raw,
              location, city_computed,
-             url_billetterie, raw_id)
+             url_billetterie, raw_id, source_url)
         VALUES %s
         ON CONFLICT (signature) DO UPDATE SET
             city_computed = EXCLUDED.city_computed,
@@ -212,7 +217,8 @@ def process_bdxc():
             title = EXCLUDED.title,
             event_type = EXCLUDED.event_type,
             genre_family = EXCLUDED.genre_family,
-            location = EXCLUDED.location;
+            location = EXCLUDED.location,
+            source_url = EXCLUDED.source_url;
     """
 
     try:
