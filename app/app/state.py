@@ -2,7 +2,7 @@ import reflex as rx
 from .models import Event, EventGroup, Movie, MovieGroup, SearchResult
 from sqlmodel import select
 import itertools
-from datetime import date
+from datetime import date, timedelta
 
 
 def _score_title(query_lower: str, title: str) -> int:
@@ -100,9 +100,10 @@ class State(rx.State):
         if not self.events:
             return []
 
-        current_year = date.today().year
+        today = date.today()
+        current_year = today.year
 
-        filtered = self.events
+        filtered = [e for e in self.events if e.event_date >= today - timedelta(days=1)]
         if self.selected_family != "All":
             filtered = [e for e in filtered if e.genre_family == self.selected_family]
         if self.selected_city != "All":

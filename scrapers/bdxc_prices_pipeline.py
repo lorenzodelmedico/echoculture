@@ -47,9 +47,12 @@ def extract_prices_from_html(html: str) -> list[dict]:
         if "Tarification" not in line:
             continue
 
-        # Universally free — "Gratuit" is the very first content after the header
-        if i + 1 < len(lines) and lines[i + 1].startswith("Gratuit"):
+        # Universally free — known free labels as the first content after the header
+        next_line = lines[i + 1] if i + 1 < len(lines) else ""
+        if next_line.startswith("Gratuit"):
             return [{"label": "Gratuit", "amount": 0.0}]
+        if next_line.startswith("Prix libre"):
+            return [{"label": "Prix libre", "amount": 0.0}]
 
         prices = []
         window = lines[i + 1 : i + 20]
@@ -71,6 +74,9 @@ def extract_prices_from_html(html: str) -> list[dict]:
                 prev = window[j - 1]
                 if prev and prev not in _NOISE_LABELS and "€" not in prev:
                     prices.append({"label": f"Gratuit ({prev})", "amount": 0.0})
+            # "Prix libre" anywhere in the window
+            elif sub.startswith("Prix libre"):
+                prices.append({"label": "Prix libre", "amount": 0.0})
 
         return prices
 

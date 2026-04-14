@@ -75,6 +75,12 @@ def test_extract_prices_conditional_free():
     assert "Enfant (-11 ans)" in free[0]["label"]
 
 
+def test_extract_prices_prix_libre():
+    html = _wrap("<p>Tarification</p><p>Prix libre</p>")
+    result = extract_prices_from_html(html)
+    assert result == [{"label": "Prix libre", "amount": 0.0}]
+
+
 def test_extract_prices_no_section():
     html = _wrap("<p>Aucune info de tarif ici.</p>")
     result = extract_prices_from_html(html)
