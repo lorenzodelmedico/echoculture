@@ -19,7 +19,7 @@ def event_card(ev: Event):
                     rx.cond(
                         ev.min_price == 0.0,
                         rx.badge(
-                            "Gratuit",
+                            ev.free_label,  # type: ignore[arg-type]
                             color_scheme="green",
                             variant="soft",
                             radius="full",
@@ -92,10 +92,16 @@ def event_card(ev: Event):
                 rx.cond(
                     ev.source_url,
                     rx.link(
-                        rx.icon("external-link", size=14, color="gray"),
+                        rx.button(
+                            rx.icon("external-link", size=14),
+                            "En savoir plus",
+                            variant="surface",
+                            color_scheme="gray",
+                            size="1",
+                            radius="full",
+                        ),
                         href=ev.source_url.to(str),  # type: ignore[union-attr]
                         is_external=True,
-                        _hover={"opacity": "0.7"},
                     ),
                     rx.box(),
                 ),

@@ -34,7 +34,7 @@ def _wrap(body: str) -> str:
     return f"<html><body>{body}</body></html>"
 
 
-def test_extract_prices_free():
+def test_extract_prices_universally_free():
     html = _wrap("<p>Tarification</p><p>Gratuit</p>")
     result = extract_prices_from_html(html)
     assert result == [{"label": "Gratuit", "amount": 0.0}]
@@ -61,6 +61,20 @@ def test_extract_prices_multiple():
     assert 12.0 in amounts
 
 
+def test_extract_prices_conditional_free():
+    """Paid for adults, free for children — conditional Gratuit captures the label."""
+    html = _wrap(
+        "<p>Tarification</p><p>Payant</p>"
+        "<p>Adulte</p><p>12 €</p>"
+        "<p>Enfant (-11 ans)</p><p>Gratuit</p>"
+    )
+    result = extract_prices_from_html(html)
+    assert any(r["amount"] == 12.0 for r in result)
+    free = [r for r in result if r["amount"] == 0.0]
+    assert len(free) == 1
+    assert "Enfant (-11 ans)" in free[0]["label"]
+
+
 def test_extract_prices_no_section():
     html = _wrap("<p>Aucune info de tarif ici.</p>")
     result = extract_prices_from_html(html)
@@ -79,11 +93,10 @@ def test_extract_prices_decimal():
 
 @pytest.mark.integration
 def test_fetch_real_bdxc_price_page():
-    url = """https://www.bdxc.fr/evenements/bordeaux/2026-04-15/
-    rock-school-barbey-mercredi-15-avril-2026/"""
+    url = "https://www.bdxc.fr/evenements/bordeaux/2026-04-15/rock-school-barbey-mercredi-15-avril-2026/"  # noqa: E501
     html = fetch_event_page(url)
     assert html is not None, "Page returned None — may be 404 or network error"
-    assert (
-        "Tarification" in html
-    ), """Price section not found — page may be JS-rendered; consider
-    switching fetch_event_page to Playwright"""
+    assert "Tarification" in html, (
+        "Price section not found — page may be JS-rendered; "
+        "consider switching fetch_event_page to Playwright"
+    )

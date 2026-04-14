@@ -1,7 +1,8 @@
 ALTER TABLE events
     ADD COLUMN IF NOT EXISTS source_url TEXT,
     ADD COLUMN IF NOT EXISTS min_price  FLOAT,
-    ADD COLUMN IF NOT EXISTS max_price  FLOAT;
+    ADD COLUMN IF NOT EXISTS max_price  FLOAT,
+    ADD COLUMN IF NOT EXISTS free_label TEXT;
 
 CREATE TABLE IF NOT EXISTS event_prices (
     id               SERIAL PRIMARY KEY,

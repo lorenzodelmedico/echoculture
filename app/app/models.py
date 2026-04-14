@@ -21,6 +21,7 @@ class Event(rx.Model, table=True):  # type: ignore
     source_url: Optional[str] = None
     min_price: Optional[float] = None
     max_price: Optional[float] = None
+    free_label: Optional[str] = None
 
 
 class EventPrice(rx.Model, table=True):  # type: ignore

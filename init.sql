@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS events (
     source_url TEXT,
     min_price FLOAT,
     max_price FLOAT,
+    free_label TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

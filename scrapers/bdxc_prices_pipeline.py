@@ -12,8 +12,9 @@ from bs4 import BeautifulSoup
 from utils.db import pg_connection
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; EchoCulture-scraper/1.0)"}
-MAX_PRICE_SCRAPE = int(os.getenv("MAX_PRICE_SCRAPE", "100"))
 PRICE_SCRAPE_DAYS_AHEAD = int(os.getenv("PRICE_SCRAPE_DAYS_AHEAD", "60"))
+
+_NOISE_LABELS = {"Payant", "Tarification", "Tarif"}
 
 
 def generate_bdxc_url(slug: str, location: str, start_date: str) -> str | None:
@@ -45,18 +46,32 @@ def extract_prices_from_html(html: str) -> list[dict]:
     for i, line in enumerate(lines):
         if "Tarification" not in line:
             continue
-        if i + 1 < len(lines) and "Gratuit" in lines[i + 1]:
+
+        # Universally free — "Gratuit" is the very first content after the header
+        if i + 1 < len(lines) and lines[i + 1].startswith("Gratuit"):
             return [{"label": "Gratuit", "amount": 0.0}]
+
         prices = []
-        window = lines[i + 1 : i + 11]
+        window = lines[i + 1 : i + 20]
+
         for j, sub in enumerate(window):
+            # Paid price line
             m = re.search(r"(\d+[.,]?\d*)\s*€", sub)
             if m:
                 amount = float(m.group(1).replace(",", "."))
-                label = window[j - 1] if j > 0 else "Tarif Unique"
-                if label in ("Payant",) or "€" in label:
-                    label = "Entrée"
+                prev = window[j - 1] if j > 0 else ""
+                label = (
+                    prev
+                    if prev and prev not in _NOISE_LABELS and "€" not in prev
+                    else "Entrée"
+                )
                 prices.append({"label": label, "amount": amount})
+            # Conditional free entry — "Gratuit" with a meaningful preceding label
+            elif sub == "Gratuit" and j > 0:
+                prev = window[j - 1]
+                if prev and prev not in _NOISE_LABELS and "€" not in prev:
+                    prices.append({"label": f"Gratuit ({prev})", "amount": 0.0})
+
         return prices
 
     return []
@@ -80,9 +95,8 @@ def process_bdxc_prices():
                   AND event_date <= %s
                   AND min_price IS NULL
                 ORDER BY event_date
-                LIMIT %s
                 """,
-                (today, cutoff, MAX_PRICE_SCRAPE),
+                (today, cutoff),
             )
             targets = cur.fetchall()
             cur.close()
@@ -105,6 +119,8 @@ def process_bdxc_prices():
             continue
 
         amounts = [p["amount"] for p in prices]
+        # Label of the first free entry (if any) for badge display in the UI
+        free_label = next((p["label"] for p in prices if p["amount"] == 0.0), None)
         try:
             with pg_connection() as conn:
                 cur = conn.cursor()
@@ -122,10 +138,10 @@ def process_bdxc_prices():
                 cur.execute(
                     """
                     UPDATE events
-                    SET min_price = %s, max_price = %s
+                    SET min_price = %s, max_price = %s, free_label = %s
                     WHERE signature = %s
                     """,
-                    (min(amounts), max(amounts), signature),
+                    (min(amounts), max(amounts), free_label, signature),
                 )
                 cur.close()
             found += 1
