@@ -1,0 +1,15 @@
+version: 2
+
+models:
+  - name: stg_movies
+    description: "Cleaned movies — genres trimmed, empty strings coalesced to NULL"
+    columns:
+      - name: signature
+        description: "MD5 of title+release_date — primary key"
+        tests:
+          - not_null
+          - unique
+      - name: title
+        description: "Film title"
+        tests:
+          - not_null

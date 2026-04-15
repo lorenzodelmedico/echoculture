@@ -23,6 +23,10 @@ charset-normalizer==3.4.6
 idna==3.11
 urllib3==2.6.3
 
+# --- Data Engineering ---
+dbt-postgres==1.9.1
+pyspark==3.5.3
+
 # --- Validation (Versions compatibles Airflow 2.10) ---
 pydantic==2.12.5
 pydantic-core==2.41.5

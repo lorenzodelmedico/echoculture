@@ -1,0 +1,23 @@
+version: 2
+
+models:
+  - name: stg_events
+    description: "Cleaned concert events — null-checked, ready for transformation"
+    columns:
+      - name: signature
+        description: "MD5 of title+date+location — primary key"
+        tests:
+          - not_null
+          - unique
+      - name: title
+        description: "Event title"
+        tests:
+          - not_null
+      - name: event_date
+        description: "Date of the event"
+        tests:
+          - not_null
+      - name: source
+        description: "Data source (BDXC, etc.)"
+        tests:
+          - not_null

@@ -37,7 +37,12 @@ def fetch_event_page(url: str) -> str | None:
         return None
 
 
-def extract_prices_from_html(html: str) -> list[dict]:
+def extract_prices_from_html(html: str) -> tuple[list[dict], str | None]:
+    """Return (prices, price_tag).
+
+    price_tag is 'payant' when the page confirms the event is paid but gives
+    no specific amount. None in all other cases.
+    """
     soup = BeautifulSoup(html, "html.parser")
     lines = [
         ln.strip() for ln in soup.get_text(separator="\n").split("\n") if ln.strip()
@@ -50,11 +55,14 @@ def extract_prices_from_html(html: str) -> list[dict]:
         # Universally free — known free labels as the first content after the header
         next_line = lines[i + 1] if i + 1 < len(lines) else ""
         if next_line.startswith("Gratuit"):
-            return [{"label": "Gratuit", "amount": 0.0}]
+            return [{"label": "Gratuit", "amount": 0.0}], None
         if next_line.startswith("Prix libre"):
-            return [{"label": "Prix libre", "amount": 0.0}]
+            return [{"label": "Prix libre", "amount": 0.0}], None
+        if next_line.startswith("Entrée libre"):
+            return [{"label": "Entrée libre", "amount": 0.0}], None
 
         prices = []
+        payant_found = False
         window = lines[i + 1 : i + 20]
 
         for j, sub in enumerate(window):
@@ -74,13 +82,23 @@ def extract_prices_from_html(html: str) -> list[dict]:
                 prev = window[j - 1]
                 if prev and prev not in _NOISE_LABELS and "€" not in prev:
                     prices.append({"label": f"Gratuit ({prev})", "amount": 0.0})
+            # "Entrée libre" anywhere in the window
+            elif sub.startswith("Entrée libre"):
+                prices.append({"label": "Entrée libre", "amount": 0.0})
             # "Prix libre" anywhere in the window
             elif sub.startswith("Prix libre"):
                 prices.append({"label": "Prix libre", "amount": 0.0})
+            # "Payant" with no specific amount — remember it
+            elif sub == "Payant":
+                payant_found = True
 
-        return prices
+        if prices:
+            return prices, None
+        if payant_found:
+            return [], "payant"
+        return [], None
 
-    return []
+    return [], None
 
 
 def process_bdxc_prices():
@@ -118,37 +136,50 @@ def process_bdxc_prices():
         if html is None:
             continue
 
-        prices = extract_prices_from_html(html)
-        if not prices:
+        prices, price_tag = extract_prices_from_html(html)
+        if not prices and not price_tag:
             if i < len(targets) - 1:
                 time.sleep(random.uniform(1.0, 2.0))
             continue
 
-        amounts = [p["amount"] for p in prices]
-        # Label of the first free entry (if any) for badge display in the UI
-        free_label = next((p["label"] for p in prices if p["amount"] == 0.0), None)
         try:
             with pg_connection() as conn:
                 cur = conn.cursor()
-                for p in prices:
+                if prices:
+                    amounts = [p["amount"] for p in prices]
+                    free_label = next(
+                        (p["label"] for p in prices if p["amount"] == 0.0), None
+                    )
+                    for p in prices:
+                        cur.execute(
+                            """
+                            INSERT INTO event_prices (event_signature, label, amount)
+                            VALUES (%s, %s, %s)
+                            ON CONFLICT (event_signature, label) DO UPDATE
+                                SET amount = EXCLUDED.amount,
+                                    scraped_at = CURRENT_TIMESTAMP
+                            """,
+                            (signature, p["label"], p["amount"]),
+                        )
                     cur.execute(
                         """
-                        INSERT INTO event_prices (event_signature, label, amount)
-                        VALUES (%s, %s, %s)
-                        ON CONFLICT (event_signature, label) DO UPDATE
-                            SET amount = EXCLUDED.amount,
-                                scraped_at = CURRENT_TIMESTAMP
+                        UPDATE events
+                        SET min_price = %s, max_price = %s,
+                            free_label = %s, price_tag = NULL
+                        WHERE signature = %s
                         """,
-                        (signature, p["label"], p["amount"]),
+                        (min(amounts), max(amounts), free_label, signature),
                     )
-                cur.execute(
-                    """
-                    UPDATE events
-                    SET min_price = %s, max_price = %s, free_label = %s
-                    WHERE signature = %s
-                    """,
-                    (min(amounts), max(amounts), free_label, signature),
-                )
+                else:
+                    # price_tag = 'payant': confirmed paid but no specific amount
+                    cur.execute(
+                        """
+                        UPDATE events
+                        SET price_tag = %s
+                        WHERE signature = %s
+                        """,
+                        (price_tag, signature),
+                    )
                 cur.close()
             found += 1
         except Exception as e:

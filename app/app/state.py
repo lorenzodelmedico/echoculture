@@ -111,9 +111,11 @@ class State(rx.State):
 
         if self.selected_price_range == "Gratuit":
             filtered = [e for e in filtered if e.min_price == 0.0]
+        elif self.selected_price_range == "Payant":
+            filtered = [e for e in filtered if e.price_tag == "payant"]
         elif self.selected_price_range == "< 10€":
             filtered = [
-                e for e in filtered if e.min_price is not None and e.min_price < 10
+                e for e in filtered if e.min_price is not None and 0 < e.min_price < 10
             ]
         elif self.selected_price_range == "10-20€":
             filtered = [
@@ -124,6 +126,10 @@ class State(rx.State):
         elif self.selected_price_range == "20€+":
             filtered = [
                 e for e in filtered if e.min_price is not None and e.min_price > 20
+            ]
+        elif self.selected_price_range == "Inconnu":
+            filtered = [
+                e for e in filtered if e.min_price is None and e.price_tag is None
             ]
 
         sorted_events = sorted(filtered, key=lambda x: x.event_date)
@@ -210,4 +216,6 @@ class State(rx.State):
 
     @rx.var
     def has_price_data(self) -> bool:
-        return any(e.min_price is not None for e in self.events)
+        return any(
+            e.min_price is not None or e.price_tag is not None for e in self.events
+        )

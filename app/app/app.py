@@ -32,7 +32,17 @@ def event_card(ev: Event):
                                 variant="soft",
                                 radius="full",
                             ),
-                            rx.box(),
+                            rx.cond(
+                                ev.price_tag == "payant",
+                                rx.badge(
+                                    rx.icon("euro", size=11),
+                                    "Payant",
+                                    color_scheme="orange",
+                                    variant="soft",
+                                    radius="full",
+                                ),
+                                rx.box(),
+                            ),
                         ),
                     ),
                     spacing="1",
@@ -251,7 +261,9 @@ def about_page() -> rx.Component:
                 ),
                 rx.divider(color_scheme="violet"),
                 rx.vstack(
-                    rx.heading("Sources", size="5", weight="bold", color="white"),
+                    rx.heading(
+                        "Sources principales", size="5", weight="bold", color="white"
+                    ),
                     rx.vstack(
                         rx.hstack(
                             rx.text("🎵", size="3"),
@@ -368,7 +380,15 @@ def sticky_header():
                     rx.cond(
                         State.has_price_data,
                         rx.select(
-                            ["Tous", "Gratuit", "< 10€", "10-20€", "20€+"],
+                            [
+                                "Tous",
+                                "Gratuit",
+                                "Payant",
+                                "< 10€",
+                                "10-20€",
+                                "20€+",
+                                "Inconnu",
+                            ],
                             value=State.selected_price_range,
                             on_change=State.set_price_range,
                             variant="soft",
@@ -608,26 +628,7 @@ app = rx.App(
         # Viewport
         rx.el.meta(name="viewport", content="width=device-width, initial-scale=1.0"),
         # Icons
-        rx.el.link(rel="apple-touch-icon", href="/icon-192.png"),
-        # Skip ngrok browser warning on first visit by patching fetch + XHR
-        rx.el.script("""
-                (function() {
-                    var _fetch = window.fetch;
-                    window.fetch = function(input, init) {
-                        init = init || {};
-                        init.headers = Object.assign(
-                            {}, init.headers,
-                            {'ngrok-skip-browser-warning': '1'}
-                        );
-                        return _fetch(input, init);
-                    };
-                    var _open = XMLHttpRequest.prototype.open;
-                    XMLHttpRequest.prototype.open = function() {
-                        _open.apply(this, arguments);
-                        this.setRequestHeader('ngrok-skip-browser-warning', '1');
-                    };
-                })();
-            """),
+        rx.el.link(rel="apple-touch-icon", href="/icon-event-192.png"),
         # Register service worker
         rx.el.script("""
                 if ('serviceWorker' in navigator) {

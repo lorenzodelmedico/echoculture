@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: echoculture
+    schema: public
+    description: "EchoCulture PostgreSQL silver layer — populated by Airflow scrapers"
+    tables:
+      - name: events
+        description: "Concert events scraped from BDXC"
+      - name: movies
+        description: "Film releases scraped from Écran Total"
+      - name: event_prices
+        description: "Detailed price tiers per event (label + amount)"

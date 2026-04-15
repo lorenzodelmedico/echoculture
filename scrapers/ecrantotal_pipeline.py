@@ -302,7 +302,7 @@ def fetch_wikipedia_genres(title: str) -> str | None:
     return None
 
 
-def process_ecrantotal():
+def process_ecrantotal(skip_enrichment: bool = False):
     logging.info("Début du pipeline Écran Total (films)...")
 
     try:
@@ -370,12 +370,18 @@ def process_ecrantotal():
         f"{len(needs_lookup)} films à chercher sur Wikipedia."
     )
 
-    for i, movie in enumerate(needs_lookup):
-        genres = fetch_wikipedia_genres(movie["title"])
-        if genres:
-            movie["genres"] = genres
-        if i < len(needs_lookup) - 1:
-            time.sleep(1.5)
+    if skip_enrichment:
+        logging.info(
+            "Genre enrichment skipped (skip_enrichment=True) — "
+            "Spark job will handle it after insertion."
+        )
+    else:
+        for i, movie in enumerate(needs_lookup):
+            genres = fetch_wikipedia_genres(movie["title"])
+            if genres:
+                movie["genres"] = genres
+            if i < len(needs_lookup) - 1:
+                time.sleep(1.5)
 
     logging.info("Genres extraction complète. Insertion dans Postgres...")
 

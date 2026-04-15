@@ -22,6 +22,7 @@ class Event(rx.Model, table=True):  # type: ignore
     min_price: Optional[float] = None
     max_price: Optional[float] = None
     free_label: Optional[str] = None
+    price_tag: Optional[str] = None
 
 
 class EventPrice(rx.Model, table=True):  # type: ignore

@@ -69,6 +69,8 @@ services:
       - ./scrapers:/opt/airflow/scrapers
       - ./utils:/opt/airflow/utils
       - ./logs:/opt/airflow/logs
+      - ./dbt:/opt/airflow/dbt
+      - ./spark:/opt/airflow/spark
     environment:
       LOAD_EX: "False"
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
@@ -96,12 +98,27 @@ services:
       - ./scrapers:/opt/airflow/scrapers
       - ./utils:/opt/airflow/utils
       - ./logs:/opt/airflow/logs
+      - ./dbt:/opt/airflow/dbt
+      - ./spark:/opt/airflow/spark
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
       PYTHONPATH: /opt/airflow
     command: scheduler
+  spark:
+    image: apache/spark:3.5.1
+    container_name: echoculture_spark
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+    ports:
+      - "7077:7077"
+      - "8085:8080"
+    volumes:
+      - ./spark:/opt/spark-jobs
+    command: >
+      /opt/spark/sbin/start-master.sh --host 0.0.0.0 --port 7077 --webui-port 8080
+
   echoculture-ui:
       build:
         context: .
@@ -116,7 +133,6 @@ services:
         - "8000:8000"
       environment:
         - API_URL=${API_URL}
-        - NGROK_BACKEND_URL=${NGROK_BACKEND_URL}
         - FRONTEND_URL=${FRONTEND_URL}
         - POSTGRES_URL=${POSTGRES_URL}
         - OLLAMA_URL=${OLLAMA_URL}
@@ -124,12 +140,12 @@ services:
         - db_postgres
       restart: always
 
-  ngrok:
-    image: ngrok/ngrok:latest
-    container_name: echoculture_ngrok
-    command: http echoculture-ui:3000 --url=wrongfully-grizzled-janina.ngrok-free.dev --host-header=rewrite
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: echoculture_cloudflared
+    command: tunnel --no-autoupdate run
     environment:
-      NGROK_AUTHTOKEN: ${NGROK_TOKEN}
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
     depends_on:
       - echoculture-ui
     restart: always

@@ -13,10 +13,16 @@ poetry.lock
 # OS
 .DS_Store
 
-#Logs
+# Logs
 logs/
 *.log
 
-#app
+# DBT — generated build artifacts, never commit
+dbt/target/
+dbt/logs/
+dbt/.user.yml
+
+# Tunnel config (contains auth tokens)
 .ngrok.yml
 ngrok.yml
+cloudflared.yml
