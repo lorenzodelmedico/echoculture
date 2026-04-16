@@ -1,6 +1,6 @@
 import reflex as rx
 from .state import State
-from .models import Event, Movie
+from .models import Event, Movie, TodayItem
 
 
 def event_card(ev: Event):
@@ -222,6 +222,200 @@ TAB_HEIGHT = "44px"
 STICKY_TOP = f"calc({HEADER_HEIGHT} + {TAB_HEIGHT})"
 
 
+def today_card(item: TodayItem):
+    return rx.box(
+        rx.vstack(
+            rx.vstack(
+                rx.hstack(
+                    rx.cond(
+                        item.item_type == "movie",
+                        rx.badge(
+                            "Film", variant="soft", color_scheme="amber", radius="full"
+                        ),
+                        rx.cond(
+                            item.category == "spectacles",
+                            rx.badge(
+                                "Spectacle",
+                                variant="soft",
+                                color_scheme="pink",
+                                radius="full",
+                            ),
+                            rx.cond(
+                                item.category == "expositions",
+                                rx.badge(
+                                    "Expo",
+                                    variant="soft",
+                                    color_scheme="cyan",
+                                    radius="full",
+                                ),
+                                rx.badge(
+                                    "Concert",
+                                    variant="soft",
+                                    color_scheme="violet",
+                                    radius="full",
+                                ),
+                            ),
+                        ),
+                    ),
+                    rx.cond(
+                        item.item_type == "event",
+                        rx.cond(
+                            item.min_price == 0.0,
+                            rx.badge(
+                                item.free_label,  # type: ignore
+                                color_scheme="green",
+                                variant="soft",
+                                radius="full",
+                            ),
+                            rx.cond(
+                                item.min_price,
+                                rx.badge(
+                                    item.min_price.to(int).to(str)  # type: ignore
+                                    + "€+",
+                                    color_scheme="blue",
+                                    variant="soft",
+                                    radius="full",
+                                ),
+                                rx.cond(
+                                    item.price_tag == "payant",
+                                    rx.badge(
+                                        rx.icon("euro", size=11),
+                                        "Payant",
+                                        color_scheme="orange",
+                                        variant="soft",
+                                        radius="full",
+                                    ),
+                                    rx.box(),
+                                ),
+                            ),
+                        ),
+                        rx.box(),
+                    ),
+                    spacing="1",
+                    wrap="wrap",
+                ),
+                rx.text(item.title, size="3", weight="bold", color="white"),
+                rx.cond(
+                    item.item_type == "event",
+                    rx.cond(
+                        item.location,
+                        rx.hstack(
+                            rx.icon("map-pin", size=13, color="gray"),
+                            rx.text(item.location, size="2", color="gray"),
+                            spacing="1",
+                            align_items="center",
+                        ),
+                        rx.box(),
+                    ),
+                    rx.cond(
+                        item.director,
+                        rx.hstack(
+                            rx.icon("film", size=13, color="gray"),
+                            rx.text(item.director, size="2", color="gray"),
+                            spacing="1",
+                            align_items="center",
+                        ),
+                        rx.box(),
+                    ),
+                ),
+                spacing="2",
+                align_items="start",
+                width="100%",
+                style={"flex": "1"},
+            ),
+            rx.hstack(
+                rx.cond(
+                    item.item_type == "event",
+                    rx.cond(
+                        item.url_billetterie,
+                        rx.link(
+                            rx.button(
+                                rx.icon("ticket", size=14),
+                                "Réserver",
+                                variant="surface",
+                                color_scheme="violet",
+                                size="1",
+                                radius="full",
+                            ),
+                            href=item.url_billetterie.to(str),  # type: ignore
+                            is_external=True,
+                        ),
+                        rx.box(height="26px"),
+                    ),
+                    rx.link(
+                        rx.button(
+                            rx.icon("info", size=14),
+                            "AlloCiné",
+                            variant="surface",
+                            color_scheme="amber",
+                            size="1",
+                            radius="full",
+                        ),
+                        href="https://www.allocine.fr/rechercher/?q=" + item.title,
+                        is_external=True,
+                    ),
+                ),
+                rx.cond(
+                    item.source_url,
+                    rx.link(
+                        rx.button(
+                            rx.icon("external-link", size=14),
+                            "En savoir plus",
+                            variant="surface",
+                            color_scheme="gray",
+                            size="1",
+                            radius="full",
+                        ),
+                        href=item.source_url.to(str),  # type: ignore
+                        is_external=True,
+                    ),
+                    rx.box(),
+                ),
+                spacing="2",
+                align_items="center",
+            ),
+            align_items="start",
+            width="100%",
+            style={
+                "height": "100%",
+                "display": "flex",
+                "flexDirection": "column",
+                "justifyContent": "space-between",
+                "gap": "12px",
+                "padding": "12px",
+            },
+        ),
+        width="100%",
+        height="100%",
+        background_color="rgba(255,255,255,0.03)",
+        border_radius="var(--radius-3)",
+        style={"display": "flex", "flexDirection": "column"},
+    )
+
+
+def today_view():
+    return rx.cond(
+        State.today_items,
+        rx.box(
+            rx.grid(
+                rx.foreach(State.today_items, today_card),
+                columns={"initial": "1", "sm": "2", "lg": "3"},
+                width="100%",
+                gap="3",
+                align_items="stretch",
+            ),
+            width="100%",
+        ),
+        rx.vstack(
+            rx.icon("calendar-x", size=48, color="gray"),
+            rx.text("Rien de prévu aujourd'hui.", size="3", color="gray"),
+            align_items="center",
+            padding_top="4em",
+            width="100%",
+        ),
+    )
+
+
 def about_page() -> rx.Component:
     return rx.box(
         sticky_header(),
@@ -357,7 +551,19 @@ def sticky_header():
                 _hover={"opacity": "0.7"},
             ),
             rx.cond(
-                State.active_tab == "concerts",
+                State.active_tab == "films",
+                rx.hstack(
+                    rx.select(
+                        State.unique_genres,
+                        value=State.selected_genre,
+                        on_change=State.set_genre,
+                        variant="soft",
+                        radius="full",
+                        color_scheme="amber",
+                        placeholder="Genre",
+                    ),
+                    spacing="2",
+                ),
                 rx.hstack(
                     rx.select(
                         State.unique_families,
@@ -384,9 +590,9 @@ def sticky_header():
                                 "Tous",
                                 "Gratuit",
                                 "Payant",
-                                "< 10€",
-                                "10-20€",
-                                "20€+",
+                                "< 10\u20ac",
+                                "10-20\u20ac",
+                                "20\u20ac+",
                                 "Inconnu",
                             ],
                             value=State.selected_price_range,
@@ -397,18 +603,6 @@ def sticky_header():
                             placeholder="Prix",
                         ),
                         rx.box(),
-                    ),
-                    spacing="2",
-                ),
-                rx.hstack(
-                    rx.select(
-                        State.unique_genres,
-                        value=State.selected_genre,
-                        on_change=State.set_genre,
-                        variant="soft",
-                        radius="full",
-                        color_scheme="amber",
-                        placeholder="Genre",
                     ),
                     spacing="2",
                 ),
@@ -423,7 +617,15 @@ def sticky_header():
         # Row 2: tabs
         rx.hstack(
             rx.button(
-                "🎵 Concerts",
+                "Aujourd'hui",
+                on_click=State.go_today,
+                variant=rx.cond(State.active_tab == "today", "solid", "ghost"),
+                color_scheme="gold",
+                radius="full",
+                size="2",
+            ),
+            rx.button(
+                "Concerts",
                 on_click=State.go_concerts,
                 variant=rx.cond(State.active_tab == "concerts", "solid", "ghost"),
                 color_scheme="violet",
@@ -431,7 +633,23 @@ def sticky_header():
                 size="2",
             ),
             rx.button(
-                "🎬 Films",
+                "Spectacles",
+                on_click=State.go_spectacles,
+                variant=rx.cond(State.active_tab == "spectacles", "solid", "ghost"),
+                color_scheme="pink",
+                radius="full",
+                size="2",
+            ),
+            rx.button(
+                "Expos",
+                on_click=State.go_expositions,
+                variant=rx.cond(State.active_tab == "expositions", "solid", "ghost"),
+                color_scheme="cyan",
+                radius="full",
+                size="2",
+            ),
+            rx.button(
+                "Films",
                 on_click=State.go_films,
                 variant=rx.cond(State.active_tab == "films", "solid", "ghost"),
                 color_scheme="amber",
@@ -494,6 +712,20 @@ def concerts_view():
     )
 
 
+def spectacles_view():
+    return rx.foreach(
+        State.grouped_spectacles_list,
+        lambda day: day_section(day.date_display, day.events, event_card),
+    )
+
+
+def expositions_view():
+    return rx.foreach(
+        State.grouped_expositions_list,
+        lambda day: day_section(day.date_display, day.events, event_card),
+    )
+
+
 def films_view():
     return rx.foreach(
         State.grouped_movies_list,
@@ -514,39 +746,12 @@ def search_results_view():
             rx.foreach(
                 State.search_results,
                 lambda result: rx.cond(
-                    result.type == "event",
+                    result.type == "movie",
                     rx.box(
                         rx.vstack(
                             rx.hstack(
                                 rx.badge(
-                                    "🎵 Concert",
-                                    variant="soft",
-                                    color_scheme="violet",
-                                    radius="full",
-                                ),
-                                rx.text(
-                                    result.title, size="3", weight="bold", color="white"
-                                ),
-                                spacing="2",
-                            ),
-                            rx.text(
-                                result.event.event_date.to(str),
-                                size="2",
-                                color="gray",
-                            ),
-                            spacing="2",
-                        ),
-                        padding="1em",
-                        background_color="rgba(255,255,255,0.03)",
-                        border_radius="var(--radius-3)",
-                        margin_bottom="1em",
-                        width="100%",
-                    ),
-                    rx.box(
-                        rx.vstack(
-                            rx.hstack(
-                                rx.badge(
-                                    "🎬 Film",
+                                    "Film",
                                     variant="soft",
                                     color_scheme="amber",
                                     radius="full",
@@ -564,6 +769,51 @@ def search_results_view():
                                     color="gray",
                                 ),
                                 rx.text("Date inconnue", size="2", color="gray"),
+                            ),
+                            spacing="2",
+                        ),
+                        padding="1em",
+                        background_color="rgba(255,255,255,0.03)",
+                        border_radius="var(--radius-3)",
+                        margin_bottom="1em",
+                        width="100%",
+                    ),
+                    rx.box(
+                        rx.vstack(
+                            rx.hstack(
+                                rx.cond(
+                                    result.type == "spectacles",
+                                    rx.badge(
+                                        "Spectacle",
+                                        variant="soft",
+                                        color_scheme="pink",
+                                        radius="full",
+                                    ),
+                                    rx.cond(
+                                        result.type == "expositions",
+                                        rx.badge(
+                                            "Expo",
+                                            variant="soft",
+                                            color_scheme="cyan",
+                                            radius="full",
+                                        ),
+                                        rx.badge(
+                                            "Concert",
+                                            variant="soft",
+                                            color_scheme="violet",
+                                            radius="full",
+                                        ),
+                                    ),
+                                ),
+                                rx.text(
+                                    result.title, size="3", weight="bold", color="white"
+                                ),
+                                spacing="2",
+                            ),
+                            rx.text(
+                                result.event.event_date.to(str),
+                                size="2",
+                                color="gray",
                             ),
                             spacing="2",
                         ),
@@ -594,7 +844,36 @@ def index() -> rx.Component:
                 search_results_view(),
                 rx.vstack(
                     rx.cond(
-                        State.active_tab == "concerts", concerts_view(), films_view()
+                        State.active_tab == "today",
+                        today_view(),
+                        rx.cond(
+                            State.active_tab == "concerts",
+                            concerts_view(),
+                            rx.cond(
+                                State.active_tab == "spectacles",
+                                spectacles_view(),
+                                rx.cond(
+                                    State.active_tab == "expositions",
+                                    expositions_view(),
+                                    films_view(),
+                                ),
+                            ),
+                        ),
+                    ),
+                    # Sentinel — IntersectionObserver watches this to trigger load_more
+                    rx.box(id="events-end-sentinel", height="1px", width="100%"),
+                    # Loading indicator
+                    rx.cond(
+                        State.events_loading,
+                        rx.hstack(
+                            rx.spinner(size="2"),
+                            rx.text("Chargement...", size="2", color="gray"),
+                            spacing="2",
+                            justify="center",
+                            width="100%",
+                            padding_y="1em",
+                        ),
+                        rx.box(),
                     ),
                     width="100%",
                 ),
@@ -604,6 +883,35 @@ def index() -> rx.Component:
             padding_bottom="5em",
             padding_top="1em",
         ),
+        # Hidden button clicked by IntersectionObserver to trigger server-side load_more
+        rx.el.button(
+            id="load-more-btn",
+            on_click=State.load_more_events,
+            style={"display": "none"},
+        ),
+        # IntersectionObserver: fires when sentinel enters viewport
+        # clicks hidden button to trigger load_more
+        rx.el.script("""
+            (function() {
+                function initObserver() {
+                    var sentinel = document.getElementById('events-end-sentinel');
+                    var btn = document.getElementById('load-more-btn');
+                    if (!sentinel || !btn) return;
+                    var observer = new IntersectionObserver(function(entries) {
+                        if (entries[0].isIntersecting) {
+                            btn.click();
+                        }
+                    }, { rootMargin: '200px' });
+                    observer.observe(sentinel);
+                }
+                // Wait for DOM, then re-init on Reflex navigation
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', initObserver);
+                } else {
+                    initObserver();
+                }
+            })();
+        """),
         on_mount=State.load_events,
         background_color="#0a0a0a",
         min_height="100vh",

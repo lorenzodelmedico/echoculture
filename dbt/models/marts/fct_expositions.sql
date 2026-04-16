@@ -1,5 +1,5 @@
 SELECT *
 FROM {{ ref('int_events') }}
-WHERE category = 'concerts'
+WHERE category = 'expositions'
   AND event_date >= CURRENT_DATE - INTERVAL '1 day'
 ORDER BY event_date

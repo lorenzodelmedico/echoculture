@@ -14,6 +14,8 @@ SELECT
     min_price,
     max_price,
     free_label,
+    price_tag,
+    category,
     created_at
 FROM {{ source('echoculture', 'events') }}
 WHERE title IS NOT NULL

@@ -84,11 +84,19 @@ def generate_signature(title, date_iso, location):
 SCRAPE_MONTHS_AHEAD = 12
 
 
-def process_bdxc():
-    logging.info("Début du pipeline BDXC...")
+def process_bdxc(category: str = "concerts", api_category: str = ""):
+    """Scrape junklive.fr for a given category.
+
+    Args:
+        category: The value stored in the DB (e.g. "expositions").
+        api_category: The API query parameter value. Defaults to `category`
+                      when not specified — use when they differ (e.g.
+                      api_category="exposition" for category="expositions").
+    """
+    api_cat = api_category or category
+    logging.info(f"Début du pipeline BDXC [{category}]...")
 
     today = datetime.utcnow().date()
-    # Calcul de la date de fin sur 12 mois (même jour, année +1)
     end_month = today.month
     end_year = today.year + (SCRAPE_MONTHS_AHEAD // 12)
     end_month += SCRAPE_MONTHS_AHEAD % 12
@@ -97,23 +105,23 @@ def process_bdxc():
         end_year += 1
     end_date = today.replace(year=end_year, month=end_month)
 
-    API_URL = "https://www.bdxc.fr/frontend-api/representations"
+    API_URL = "https://www.junklive.fr/frontend-api/representations"
     HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; EchoCulture-scraper/1.0)"}
-    params = {
-        "category": "concerts",
+    params: dict[str, str] = {
+        "category": api_cat,
         "department": "33",
         "start": today.isoformat(),
         "end": end_date.isoformat(),
-        "page_size": 1000,
+        "page_size": "1000",
     }
 
-    logging.info(f"Scraping BDXC du {today} au {end_date}...")
+    logging.info(f"Scraping BDXC [{category}] du {today} au {end_date}...")
     try:
         response = requests.get(API_URL, headers=HEADERS, params=params, timeout=60)
         response.raise_for_status()
         payload = response.json()
     except Exception as e:
-        logging.error(f"Erreur lors de l'appel API BDXC: {e}")
+        logging.error(f"Erreur lors de l'appel API BDXC [{category}]: {e}")
         raise
 
     if isinstance(payload, dict):
@@ -132,27 +140,30 @@ def process_bdxc():
         raise RuntimeError("Liste d'événements introuvable dans la réponse BDXC")
 
     logging.info(
-        f"{len(events)} événements reçus ({today} → {end_date}). Traitement en cours..."
+        f"{len(events)} événements [{category}] reçus "
+        f"({today} → {end_date}). Traitement en cours..."
     )
 
     mongo_client = MongoClient(MONGO_URI)
     db = mongo_client["echoculture_bronze"]
-    col_raw = db["bdxc_events_raw"]
-    col_sync = db["bdxc_sync_history"]
+    col_raw = db[f"bdxc_{category}_raw"]
+    col_sync = db[f"bdxc_{category}_sync_history"]
 
     current_hash = hash_payload(events)
     last_sync = col_sync.find_one(sort=[("timestamp", -1)])
 
     if last_sync and last_sync.get("payload_hash") == current_hash:
         logging.info(
-            "Aucune modification BDXC détectée depuis le dernier run. Fin du pipeline."
+            f"Aucune modification BDXC [{category}] détectée depuis le dernier run. "
+            "Fin du pipeline."
         )
         return
 
     today_str = datetime.utcnow().isoformat()
     col_raw.insert_one({"timestamp": today_str, "events": events})
     logging.info(
-        f"Nouveau payload BDXC détecté (Hash: {current_hash}). Traitement en cours..."
+        f"Nouveau payload BDXC [{category}] détecté "
+        f"(Hash: {current_hash}). Traitement en cours..."
     )
 
     silver_events = []
@@ -175,7 +186,7 @@ def process_bdxc():
             continue
 
         sig = generate_signature(title, start_date, loc)
-        event_type = ev.get("primaryStyleName") or "Concert"
+        event_type = ev.get("primaryStyleName") or category.capitalize()
         genre_family = get_genre_family(event_type)
         url_billetterie = ev.get("ticketingUrl")
         raw_id = str(ev.get("id", ""))
@@ -197,11 +208,21 @@ def process_bdxc():
                 url_billetterie,
                 raw_id,
                 source_url,
+                category,
             )
         )
 
+    # Deduplicate by signature — prevents ON CONFLICT cardinality error when the API
+    # returns multiple items with identical title+date+venue (common for expositions).
+    seen: dict = {}
+    for row in silver_events:
+        seen[row[0]] = row  # row[0] is the signature
+    silver_events = list(seen.values())
+
     if not silver_events:
-        logging.warning("Aucun événement valide à insérer après filtrage.")
+        logging.warning(
+            f"Aucun événement [{category}] valide à insérer après filtrage."
+        )
         return
 
     query = """
@@ -209,7 +230,7 @@ def process_bdxc():
             (signature, source, title, event_type,
              genre_family, event_date, event_date_raw,
              location, city_computed,
-             url_billetterie, raw_id, source_url)
+             url_billetterie, raw_id, source_url, category)
         VALUES %s
         ON CONFLICT (signature) DO UPDATE SET
             city_computed = EXCLUDED.city_computed,
@@ -218,7 +239,8 @@ def process_bdxc():
             event_type = EXCLUDED.event_type,
             genre_family = EXCLUDED.genre_family,
             location = EXCLUDED.location,
-            source_url = EXCLUDED.source_url;
+            source_url = EXCLUDED.source_url,
+            category = EXCLUDED.category;
     """
 
     try:
@@ -230,11 +252,9 @@ def process_bdxc():
         logging.error(f"Erreur fatale lors de l'insertion Postgres : {e}")
         raise
 
-    # NOTE: hash enregistré seulement après succès Postgres — si Postgres crash,
-    # le prochain run re-traite les données plutôt que de les ignorer silencieusement.
     col_sync.insert_one({"timestamp": today_str, "payload_hash": current_hash})
     logging.info(
-        f"✅ Pipeline BDXC terminé. {len(silver_events)} "
+        f"✅ Pipeline BDXC [{category}] terminé. {len(silver_events)} "
         "événements insérés/mis à jour dans Postgres."
     )
 

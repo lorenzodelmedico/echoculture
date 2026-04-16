@@ -23,6 +23,7 @@ class Event(rx.Model, table=True):  # type: ignore
     max_price: Optional[float] = None
     free_label: Optional[str] = None
     price_tag: Optional[str] = None
+    category: Optional[str] = "concerts"
 
 
 class EventPrice(rx.Model, table=True):  # type: ignore
@@ -64,3 +65,25 @@ class SearchResult(BaseModel):
     score: int
     event: Optional[Event] = None
     movie: Optional[Movie] = None
+
+
+class TodayItem(BaseModel):
+    item_type: str
+    title: str
+    display_date: Optional[date] = None
+    category: Optional[str] = None
+    event_type: Optional[str] = None
+    genre_family: Optional[str] = None
+    location: Optional[str] = None
+    city_computed: Optional[str] = None
+    source_url: Optional[str] = None
+    url_billetterie: Optional[str] = None
+    min_price: Optional[float] = None
+    max_price: Optional[float] = None
+    free_label: Optional[str] = None
+    price_tag: Optional[str] = None
+    genres: Optional[str] = None
+    director: Optional[str] = None
+    synopsis: Optional[str] = None
+    duration: Optional[str] = None
+    movie_url: Optional[str] = None

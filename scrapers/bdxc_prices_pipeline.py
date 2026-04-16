@@ -1,10 +1,9 @@
 import logging
-import os
 import random
 import re
 import time
 import urllib.parse
-from datetime import date, timedelta
+from datetime import date
 
 import requests
 from bs4 import BeautifulSoup
@@ -12,7 +11,6 @@ from bs4 import BeautifulSoup
 from utils.db import pg_connection
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; EchoCulture-scraper/1.0)"}
-PRICE_SCRAPE_DAYS_AHEAD = int(os.getenv("PRICE_SCRAPE_DAYS_AHEAD", "60"))
 
 _NOISE_LABELS = {"Payant", "Tarification", "Tarif"}
 
@@ -22,12 +20,12 @@ def generate_bdxc_url(slug: str, location: str, start_date: str) -> str | None:
         return None
     date_part = start_date[:10]
     loc = urllib.parse.quote(location.lower().replace(" ", "-"))
-    return f"https://www.bdxc.fr/evenements/{loc}/{date_part}/{slug}/"
+    return f"https://www.junklive.fr/evenements/{loc}/{date_part}/{slug}/"
 
 
 def fetch_event_page(url: str) -> str | None:
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=10)
+        resp = requests.get(url, headers=HEADERS, timeout=20)
         if resp.status_code == 404:
             return None
         resp.raise_for_status()
@@ -66,17 +64,29 @@ def extract_prices_from_html(html: str) -> tuple[list[dict], str | None]:
         window = lines[i + 1 : i + 20]
 
         for j, sub in enumerate(window):
-            # Paid price line
+            prev = window[j - 1] if j > 0 else ""
+            label_from_prev = (
+                prev
+                if prev and prev not in _NOISE_LABELS and "€" not in prev
+                else "Entrée"
+            )
+            # Range format: "de X,XX à Y€" — captures both min and max
+            range_m = re.search(
+                r"de\s+(\d+[.,]?\d*)\s*€?\s*à\s+(\d+[.,]?\d*)\s*€",
+                sub,
+                re.IGNORECASE,
+            )
+            if range_m:
+                min_a = float(range_m.group(1).replace(",", "."))
+                max_a = float(range_m.group(2).replace(",", "."))
+                prices.append({"label": f"{label_from_prev} (dès)", "amount": min_a})
+                prices.append({"label": label_from_prev, "amount": max_a})
+                continue
+            # Single paid price line
             m = re.search(r"(\d+[.,]?\d*)\s*€", sub)
             if m:
                 amount = float(m.group(1).replace(",", "."))
-                prev = window[j - 1] if j > 0 else ""
-                label = (
-                    prev
-                    if prev and prev not in _NOISE_LABELS and "€" not in prev
-                    else "Entrée"
-                )
-                prices.append({"label": label, "amount": amount})
+                prices.append({"label": label_from_prev, "amount": amount})
             # Conditional free entry — "Gratuit" with a meaningful preceding label
             elif sub == "Gratuit" and j > 0:
                 prev = window[j - 1]
@@ -105,7 +115,6 @@ def process_bdxc_prices():
     logging.info("Début du pipeline prix BDXC...")
 
     today = date.today()
-    cutoff = today + timedelta(days=PRICE_SCRAPE_DAYS_AHEAD)
 
     try:
         with pg_connection() as conn:
@@ -116,11 +125,11 @@ def process_bdxc_prices():
                 FROM events
                 WHERE source_url IS NOT NULL
                   AND event_date >= %s
-                  AND event_date <= %s
                   AND min_price IS NULL
+                  AND price_tag IS NULL
                 ORDER BY event_date
                 """,
-                (today, cutoff),
+                (today,),
             )
             targets = cur.fetchall()
             cur.close()

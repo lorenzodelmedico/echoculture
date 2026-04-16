@@ -1,10 +1,9 @@
+import sys
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
-from scrapers.bdxc_pipeline import process_bdxc
 from utils.notifications import send_discord_alert
-import sys
 
 sys.path.append("/opt/airflow")
 
@@ -12,28 +11,35 @@ DBT_CMD = "dbt {cmd} --profiles-dir /opt/airflow/dbt --project-dir /opt/airflow/
 
 default_args = {
     "owner": "lorenzo",
-    "start_date": datetime(2026, 1, 1),
+    "start_date": datetime(2026, 4, 1),
     "retries": 1,
     "retry_delay": timedelta(minutes=5),
     "on_failure_callback": send_discord_alert,
 }
 
+
+def run_expositions():
+    from scrapers.bdxc_pipeline import process_bdxc
+
+    process_bdxc(category="expositions", api_category="exposition")
+
+
 with DAG(
-    "scraper_bdxc_mongodb_to_pg",
+    "scraper_bdxc_expositions",
     default_args=default_args,
     schedule_interval="@weekly",
     catchup=False,
-    tags=["culture", "bdxc", "api"],
+    tags=["culture", "bdxc", "expositions"],
 ) as dag:
 
     run_pipeline = PythonOperator(
-        task_id="process_bdxc_full",
-        python_callable=process_bdxc,
+        task_id="process_bdxc_expositions",
+        python_callable=run_expositions,
     )
 
     dbt_run = BashOperator(
-        task_id="dbt_run_concerts",
-        bash_command=DBT_CMD.format(cmd="run --select fct_concerts+"),
+        task_id="dbt_run_expositions",
+        bash_command=DBT_CMD.format(cmd="run --select fct_expositions+"),
     )
 
     dbt_test = BashOperator(

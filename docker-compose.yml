@@ -131,6 +131,9 @@ services:
       ports:
         - "3000:3000"
         - "8000:8000"
+      volumes:
+        - ./app:/app
+        - ui_web:/app/.web
       environment:
         - API_URL=${API_URL}
         - FRONTEND_URL=${FRONTEND_URL}
@@ -163,3 +166,4 @@ volumes:
   mongo_data:
   airflow_db_data:
   ollama_data:
+  ui_web:

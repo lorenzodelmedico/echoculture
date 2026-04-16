@@ -19,6 +19,8 @@ SELECT
     b.min_price,
     b.max_price,
     b.free_label,
+    b.price_tag,
+    b.category,
     b.created_at,
     COALESCE(gm.genre_family, b.genre_family) AS genre_family,
     CASE

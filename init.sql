@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS events (
     min_price FLOAT,
     max_price FLOAT,
     free_label TEXT,
+    category TEXT DEFAULT 'concerts',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

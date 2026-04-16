@@ -18,7 +18,7 @@ default_args = {
 with DAG(
     "scraper_bdxc_prices",
     default_args=default_args,
-    schedule_interval="@daily",
+    schedule_interval="@weekly",
     catchup=False,
     tags=["culture", "bdxc", "prices"],
 ) as dag:
