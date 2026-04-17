@@ -1,3 +1,5 @@
+{{ config(materialized='view') }}
+
 SELECT
     'event'       AS item_type,
     title,
