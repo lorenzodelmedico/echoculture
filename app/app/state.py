@@ -278,13 +278,58 @@ class State(rx.State):
 
     @rx.var
     def grouped_expositions_list(self) -> list[EventGroup]:
-        return _filter_and_group_events(
-            self.events,
-            "expositions",
-            self.selected_family,
-            self.selected_city,
-            self.selected_price_range,
-        )
+        # Expositions are multi-day: the scraper creates one entry per showtime.
+        # Deduplicate by (title, location) keeping only the nearest future date
+        # so each exhibition appears once regardless of how many dates are loaded.
+        today = date.today()
+        current_year = today.year
+        filtered = [
+            e
+            for e in self.events
+            if e.event_date >= today - timedelta(days=1) and e.category == "expositions"
+        ]
+        if self.selected_family != "All":
+            filtered = [e for e in filtered if e.genre_family == self.selected_family]
+        if self.selected_city != "All":
+            filtered = [e for e in filtered if e.city_computed == self.selected_city]
+        if self.selected_price_range == "Gratuit":
+            filtered = [e for e in filtered if e.min_price == 0.0]
+        elif self.selected_price_range == "Payant":
+            filtered = [e for e in filtered if e.price_tag == "payant"]
+        elif self.selected_price_range == "< 10\u20ac":
+            filtered = [
+                e for e in filtered if e.min_price is not None and 0 < e.min_price < 10
+            ]
+        elif self.selected_price_range == "10-20\u20ac":
+            filtered = [
+                e
+                for e in filtered
+                if e.min_price is not None and 10 <= e.min_price <= 20
+            ]
+        elif self.selected_price_range == "20\u20ac+":
+            filtered = [
+                e for e in filtered if e.min_price is not None and e.min_price > 20
+            ]
+        elif self.selected_price_range == "Inconnu":
+            filtered = [
+                e for e in filtered if e.min_price is None and e.price_tag is None
+            ]
+
+        seen: dict = {}
+        for e in sorted(filtered, key=lambda x: x.event_date):
+            key = (e.title, e.location or "")
+            if key not in seen:
+                seen[key] = e
+        deduped = sorted(seen.values(), key=lambda x: x.event_date)
+
+        res = []
+        for date_obj, group in itertools.groupby(deduped, key=lambda x: x.event_date):
+            if date_obj.year != current_year:
+                label = date_obj.strftime("%A %d %B %Y").capitalize()
+            else:
+                label = date_obj.strftime("%A %d %B").capitalize()
+            res.append(EventGroup(date_display=label, events=list(group)))
+        return res
 
     @rx.var
     def grouped_movies_list(self) -> list[MovieGroup]:
