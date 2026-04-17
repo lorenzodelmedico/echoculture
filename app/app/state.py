@@ -92,7 +92,7 @@ class State(rx.State):
     selected_city: str = "All"
     selected_genre: str = "All"
     selected_price_range: str = "Tous"
-    selected_today_type: str = "All"
+    selected_today_type: str = "Tous"
     search_query: str = ""
 
     def set_tab(self, tab: str):
@@ -136,39 +136,7 @@ class State(rx.State):
     def set_search(self, value: str):
         self.search_query = value
 
-    def load_events(self):
-        cutoff = date.today() - timedelta(days=1)
-        self._events_end_date = date.today() + timedelta(weeks=_INITIAL_WINDOW_WEEKS)
-        with rx.session() as session:
-            self.events = session.exec(
-                select(Event)
-                .where(col(Event.event_date) >= cutoff)
-                .where(col(Event.event_date) <= self._events_end_date)
-                .order_by(Event.event_date)
-            ).all()
-            self.movies = session.exec(
-                select(Movie)
-                .where(col(Movie.release_date) >= cutoff)
-                .order_by(Movie.release_date)
-            ).all()
-
-    def load_more_events(self):
-        if self.events_loading:
-            return
-        self.events_loading = True
-        new_end = self._events_end_date + timedelta(weeks=_MORE_WINDOW_WEEKS)
-        with rx.session() as session:
-            more = session.exec(
-                select(Event)
-                .where(col(Event.event_date) > self._events_end_date)
-                .where(col(Event.event_date) <= new_end)
-                .order_by(Event.event_date)
-            ).all()
-        self.events = self.events + more
-        self._events_end_date = new_end
-        self.events_loading = False
-
-        # Load today's unified view from the dbt mart
+    def _load_today(self) -> None:
         try:
             conn = psycopg2.connect(os.environ["POSTGRES_URL"])
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -213,6 +181,39 @@ class State(rx.State):
 
             logging.warning(f"Could not load fct_today: {e}")
             self.today_items = []
+
+    def load_events(self):
+        cutoff = date.today() - timedelta(days=1)
+        self._events_end_date = date.today() + timedelta(weeks=_INITIAL_WINDOW_WEEKS)
+        with rx.session() as session:
+            self.events = session.exec(
+                select(Event)
+                .where(col(Event.event_date) >= cutoff)
+                .where(col(Event.event_date) <= self._events_end_date)
+                .order_by(Event.event_date)
+            ).all()
+            self.movies = session.exec(
+                select(Movie)
+                .where(col(Movie.release_date) >= cutoff)
+                .order_by(Movie.release_date)
+            ).all()
+        self._load_today()
+
+    def load_more_events(self):
+        if self.events_loading:
+            return
+        self.events_loading = True
+        new_end = self._events_end_date + timedelta(weeks=_MORE_WINDOW_WEEKS)
+        with rx.session() as session:
+            more = session.exec(
+                select(Event)
+                .where(col(Event.event_date) > self._events_end_date)
+                .where(col(Event.event_date) <= new_end)
+                .order_by(Event.event_date)
+            ).all()
+        self.events = self.events + more
+        self._events_end_date = new_end
+        self.events_loading = False
 
     @rx.var
     def unique_families(self) -> list[str]:
@@ -366,11 +367,11 @@ class State(rx.State):
                 types.add("Expos")
             else:
                 types.add("Concerts")
-        return ["All"] + sorted(types)
+        return ["Tous"] + sorted(types)
 
     @rx.var
     def filtered_today_items(self) -> list[TodayItem]:
-        if self.selected_today_type == "All":
+        if self.selected_today_type == "Tous":
             return self.today_items
         t = self.selected_today_type
         return [
