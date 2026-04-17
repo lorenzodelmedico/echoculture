@@ -92,6 +92,7 @@ class State(rx.State):
     selected_city: str = "All"
     selected_genre: str = "All"
     selected_price_range: str = "Tous"
+    selected_today_type: str = "All"
     search_query: str = ""
 
     def set_tab(self, tab: str):
@@ -128,6 +129,9 @@ class State(rx.State):
 
     def set_price_range(self, value: str):
         self.selected_price_range = value
+
+    def set_today_type(self, value: str):
+        self.selected_today_type = value
 
     def set_search(self, value: str):
         self.search_query = value
@@ -349,3 +353,47 @@ class State(rx.State):
         return any(
             e.min_price is not None or e.price_tag is not None for e in self.events
         )
+
+    @rx.var
+    def today_types_available(self) -> list[str]:
+        types = set()
+        for item in self.today_items:
+            if item.item_type == "movie":
+                types.add("Films")
+            elif item.category == "spectacles":
+                types.add("Spectacles")
+            elif item.category == "expositions":
+                types.add("Expos")
+            else:
+                types.add("Concerts")
+        return ["All"] + sorted(types)
+
+    @rx.var
+    def filtered_today_items(self) -> list[TodayItem]:
+        if self.selected_today_type == "All":
+            return self.today_items
+        t = self.selected_today_type
+        return [
+            i
+            for i in self.today_items
+            if (t == "Films" and i.item_type == "movie")
+            or (t == "Spectacles" and i.category == "spectacles")
+            or (t == "Expos" and i.category == "expositions")
+            or (t == "Concerts" and i.item_type == "event" and i.category == "concerts")
+        ]
+
+    @rx.var
+    def has_multiple_families(self) -> bool:
+        return len(self.unique_families) > 1
+
+    @rx.var
+    def has_multiple_cities(self) -> bool:
+        return len(self.unique_cities) > 1
+
+    @rx.var
+    def has_multiple_genres(self) -> bool:
+        return len(self.unique_genres) > 1
+
+    @rx.var
+    def has_multiple_today_types(self) -> bool:
+        return len(self.today_types_available) > 1
