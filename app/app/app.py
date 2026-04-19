@@ -528,7 +528,7 @@ def bottom_nav():
                 size="2",
                 radius="full",
             ),
-            justify="around",
+            justify="between",
             width="100%",
             padding_x="0.5em",
             align_items="center",

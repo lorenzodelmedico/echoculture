@@ -1,6 +1,7 @@
 import reflex as rx
 import os
 from dotenv import load_dotenv
+from reflex.plugins import SitemapPlugin
 
 load_dotenv()
 
@@ -12,6 +13,9 @@ if "db_postgres" in raw_url and not os.path.exists("/.dockerenv"):
 
 config = rx.Config(
     app_name="app",
+    plugins=[
+        SitemapPlugin(),
+    ],
     title="SynkOS",
     db_url=db_url,
     env=rx.Env.PROD,
