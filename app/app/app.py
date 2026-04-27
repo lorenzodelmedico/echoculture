@@ -722,20 +722,17 @@ def day_section(date_display, items, card_fn):
             width="100%",
         ),
         rx.box(
-            rx.box(
-                rx.foreach(items, card_fn),
-                style={
-                    "display": "grid",
-                    "gridTemplateColumns": "repeat(auto-fill, minmax(300px, 1fr))",
-                    "gap": "12px",
-                    "alignItems": "stretch",
-                    "width": "100%",
-                },
-            ),
+            rx.foreach(items, card_fn),
             padding_left={"initial": "1em", "md": "0"},
             margin_left={"initial": "0.5em", "md": "0"},
             border_left={"initial": "1px solid rgba(255,255,255,0.1)", "md": "none"},
             width="100%",
+            style={
+                "display": "grid",
+                "gridTemplateColumns": "repeat(auto-fill, minmax(300px, 1fr))",
+                "gap": "12px",
+                "alignItems": "stretch",
+            },
         ),
         width="100%",
         align_items="start",
@@ -748,12 +745,12 @@ def today_view():
         State.today_items,
         rx.box(
             rx.foreach(State.filtered_today_items, today_card),
+            width="100%",
             style={
                 "display": "grid",
                 "gridTemplateColumns": "repeat(auto-fill, minmax(300px, 1fr))",
                 "gap": "12px",
                 "alignItems": "stretch",
-                "width": "100%",
             },
         ),
         rx.vstack(
@@ -811,12 +808,12 @@ def search_results_view():
                     event_card(result.event),  # type: ignore[arg-type]
                 ),
             ),
+            width="100%",
             style={
                 "display": "grid",
                 "gridTemplateColumns": "repeat(auto-fill, minmax(300px, 1fr))",
                 "gap": "12px",
                 "alignItems": "stretch",
-                "width": "100%",
             },
         ),
         width="100%",
