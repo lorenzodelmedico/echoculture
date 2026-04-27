@@ -403,85 +403,103 @@ def _nav_btn(label, on_click, is_active, icon_name, color):
 
 
 def sidebar():
-    return rx.box(
-        rx.vstack(
-            rx.heading("SynkOS", size="5", weight="bold", color="white"),
-            rx.input(
-                placeholder="Rechercher...",
-                value=State.search_query,
-                on_change=State.set_search,
-                variant="soft",
-                radius="full",
-                color_scheme="violet",
-                width="100%",
-            ),
-            rx.vstack(
-                _nav_btn(
-                    "Aujourd'hui",
-                    State.go_today,
-                    State.active_tab == "today",
-                    "sun",
-                    "gold",
-                ),
-                _nav_btn(
-                    "Concerts",
-                    State.go_concerts,
-                    State.active_tab == "concerts",
-                    "music",
-                    "violet",
-                ),
-                _nav_btn(
-                    "Spectacles",
-                    State.go_spectacles,
-                    State.active_tab == "spectacles",
-                    "sparkles",
-                    "pink",
-                ),
-                _nav_btn(
-                    "Expos",
-                    State.go_expositions,
-                    State.active_tab == "expositions",
-                    "layout-grid",
-                    "cyan",
-                ),
-                _nav_btn(
-                    "Films",
-                    State.go_films,
-                    State.active_tab == "films",
-                    "film",
-                    "amber",
-                ),
-                width="100%",
-                spacing="1",
-                padding_top="0.5em",
-            ),
-            rx.spacer(),
-            rx.link(
-                rx.hstack(
-                    rx.icon("info", size=13),
-                    rx.text("À propos", size="2"),
-                    spacing="2",
-                    align_items="center",
-                ),
-                href="/about",
-                color="gray",
-                _hover={"opacity": "0.7"},
-            ),
-            spacing="4",
-            padding="1em",
-            width="100%",
-            height="100%",
+    return rx.fragment(
+        # --- THE TOGGLE BUTTON ---
+        # This button stays visible so the user can open the sidebar
+        rx.button(
+            rx.icon(tag=rx.cond(State.sidebar_open, "chevron-left", "chevron-right")),
+            on_click=State.toggle_sidebar,
+            position="fixed",
+            top="6em",
+            # Move the button with the sidebar
+            left=rx.cond(State.sidebar_open, "260px", "10px"),
+            z_index="101",
+            variant="soft",
+            color_scheme="violet",
+            transition="left 0.3s ease-in-out",  # Smooth sliding
         ),
-        position="fixed",
-        top="0",
-        left="0",
-        height="100vh",
-        width=SIDEBAR_WIDTH,
-        background="rgba(10,10,10,0.98)",
-        border_right="1px solid rgba(255,255,255,0.07)",
-        z_index="100",
-        display={"initial": "none", "md": "flex"},
-        flex_direction="column",
+        rx.box(
+            rx.vstack(
+                rx.heading("SynkOS", size="5", weight="bold", color="white"),
+                rx.input(
+                    placeholder="Rechercher...",
+                    value=State.search_query,
+                    on_change=State.set_search,
+                    variant="soft",
+                    radius="full",
+                    color_scheme="violet",
+                    width="100%",
+                ),
+                rx.vstack(
+                    _nav_btn(
+                        "Aujourd'hui",
+                        State.go_today,
+                        State.active_tab == "today",
+                        "sun",
+                        "gold",
+                    ),
+                    _nav_btn(
+                        "Concerts",
+                        State.go_concerts,
+                        State.active_tab == "concerts",
+                        "music",
+                        "violet",
+                    ),
+                    _nav_btn(
+                        "Spectacles",
+                        State.go_spectacles,
+                        State.active_tab == "spectacles",
+                        "sparkles",
+                        "pink",
+                    ),
+                    _nav_btn(
+                        "Expos",
+                        State.go_expositions,
+                        State.active_tab == "expositions",
+                        "layout-grid",
+                        "cyan",
+                    ),
+                    _nav_btn(
+                        "Films",
+                        State.go_films,
+                        State.active_tab == "films",
+                        "film",
+                        "amber",
+                    ),
+                    width="100%",
+                    spacing="1",
+                    padding_top="0.5em",
+                ),
+                rx.spacer(),
+                rx.link(
+                    rx.hstack(
+                        rx.icon("info", size=13),
+                        rx.text("À propos", size="2"),
+                        spacing="2",
+                        align_items="center",
+                    ),
+                    href="/about",
+                    color="gray",
+                    _hover={"opacity": "0.7"},
+                ),
+                spacing="4",
+                padding="1em",
+                width="100%",
+                height="100%",
+            ),
+            position="fixed",
+            top="0",
+            # Logic: If closed, hide it to the left by its own width
+            left=rx.cond(State.sidebar_open, "0", "-250px"),
+            height="100vh",
+            width="250px",  # Use a fixed string or your SIDEBAR_WIDTH variable
+            background="rgba(10,10,10,0.98)",
+            border_right="1px solid rgba(255,255,255,0.07)",
+            z_index="100",
+            display="flex",  # Removed "none" so it's always "there" but off-screen
+            flex_direction="column",
+            transition="left 0.3s ease-in-out",  # Smooth sliding animation
+        ),
     )
 
 
@@ -704,12 +722,15 @@ def day_section(date_display, items, card_fn):
             width="100%",
         ),
         rx.box(
-            rx.grid(
+            rx.box(
                 rx.foreach(items, card_fn),
-                columns={"initial": "1", "sm": "2", "lg": "3"},
-                width="100%",
-                gap="3",
-                align_items="stretch",
+                style={
+                    "display": "grid",
+                    "gridTemplateColumns": "repeat(auto-fill, minmax(300px, 1fr))",
+                    "gap": "12px",
+                    "alignItems": "stretch",
+                    "width": "100%",
+                },
             ),
             padding_left={"initial": "1em", "md": "0"},
             margin_left={"initial": "0.5em", "md": "0"},
@@ -726,14 +747,14 @@ def today_view():
     return rx.cond(
         State.today_items,
         rx.box(
-            rx.grid(
-                rx.foreach(State.filtered_today_items, today_card),
-                columns={"initial": "1", "sm": "2", "lg": "3"},
-                width="100%",
-                gap="3",
-                align_items="stretch",
-            ),
-            width="100%",
+            rx.foreach(State.filtered_today_items, today_card),
+            style={
+                "display": "grid",
+                "gridTemplateColumns": "repeat(auto-fill, minmax(300px, 1fr))",
+                "gap": "12px",
+                "alignItems": "stretch",
+                "width": "100%",
+            },
         ),
         rx.vstack(
             rx.icon("calendar-x", size=48, color="gray"),
@@ -781,7 +802,7 @@ def search_results_view():
             color="gray",
             padding_top="1em",
         ),
-        rx.grid(
+        rx.box(
             rx.foreach(
                 State.search_results,
                 lambda result: rx.cond(
@@ -790,10 +811,13 @@ def search_results_view():
                     event_card(result.event),  # type: ignore[arg-type]
                 ),
             ),
-            columns={"initial": "1", "sm": "2", "lg": "3"},
-            gap="3",
-            align_items="stretch",
-            width="100%",
+            style={
+                "display": "grid",
+                "gridTemplateColumns": "repeat(auto-fill, minmax(300px, 1fr))",
+                "gap": "12px",
+                "alignItems": "stretch",
+                "width": "100%",
+            },
         ),
         width="100%",
         spacing="3",
@@ -843,7 +867,7 @@ def index() -> rx.Component:
                         width="100%",
                     ),
                 ),
-                max_width="1200px",
+                max_width="1800px",
                 padding_x={"initial": "1em", "md": "2em"},
                 padding_top="1em",
                 padding_bottom="2em",
@@ -877,7 +901,6 @@ def index() -> rx.Component:
                 }
             })();
         """),
-        on_mount=State.load_events,
         background_color="#0a0a0a",
         min_height="100vh",
     )
@@ -1042,5 +1065,21 @@ app = rx.App(
             """),
     ],
 )
-app.add_page(index, title="SynkOS")
+app.add_page(index, route="/", on_load=State.on_load_today, title="SynkOS")
+app.add_page(
+    index, route="/concerts", on_load=State.on_load_concerts, title="SynkOS · Concerts"
+)
+app.add_page(
+    index,
+    route="/spectacles",
+    on_load=State.on_load_spectacles,
+    title="SynkOS · Spectacles",
+)
+app.add_page(
+    index,
+    route="/expositions",
+    on_load=State.on_load_expositions,
+    title="SynkOS · Expos",
+)
+app.add_page(index, route="/films", on_load=State.on_load_films, title="SynkOS · Films")
 app.add_page(about_page, route="/about", title="SynkOS | About")

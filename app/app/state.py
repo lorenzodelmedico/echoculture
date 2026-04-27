@@ -94,29 +94,45 @@ class State(rx.State):
     selected_price_range: str = "Tous"
     selected_today_type: str = "Tous"
     search_query: str = ""
+    sidebar_open: bool = False
 
     def set_tab(self, tab: str):
         self.active_tab = tab
 
     def go_today(self):
-        self.active_tab = "today"
         return rx.redirect("/")
 
     def go_concerts(self):
-        self.active_tab = "concerts"
-        return rx.redirect("/")
+        return rx.redirect("/concerts")
 
     def go_spectacles(self):
-        self.active_tab = "spectacles"
-        return rx.redirect("/")
+        return rx.redirect("/spectacles")
 
     def go_expositions(self):
-        self.active_tab = "expositions"
-        return rx.redirect("/")
+        return rx.redirect("/expositions")
 
     def go_films(self):
+        return rx.redirect("/films")
+
+    def on_load_today(self):
+        self.active_tab = "today"
+        self.load_events()
+
+    def on_load_concerts(self):
+        self.active_tab = "concerts"
+        self.load_events()
+
+    def on_load_spectacles(self):
+        self.active_tab = "spectacles"
+        self.load_events()
+
+    def on_load_expositions(self):
+        self.active_tab = "expositions"
+        self.load_events()
+
+    def on_load_films(self):
         self.active_tab = "films"
-        return rx.redirect("/")
+        self.load_events()
 
     def set_family(self, value: str):
         self.selected_family = value
@@ -135,6 +151,9 @@ class State(rx.State):
 
     def set_search(self, value: str):
         self.search_query = value
+
+    def toggle_sidebar(self):
+        self.sidebar_open = not self.sidebar_open
 
     def _load_today(self) -> None:
         try:
