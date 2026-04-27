@@ -826,7 +826,7 @@ def index() -> rx.Component:
         sidebar(),
         rx.box(
             top_bar(),
-            rx.container(
+            rx.box(
                 rx.cond(
                     State.search_query != "",
                     search_results_view(),
@@ -864,7 +864,7 @@ def index() -> rx.Component:
                         width="100%",
                     ),
                 ),
-                max_width="1800px",
+                width="100%",
                 padding_x={"initial": "1em", "md": "2em"},
                 padding_top="1em",
                 padding_bottom="2em",
