@@ -1,42 +1,20 @@
-"""SynkOS — After Hours / Restrained
-Drop-in replacement for app/app/app.py.
-Imports State and models from siblings unchanged.
-"""
-
 import reflex as rx
 from .state import State
 from .models import Event, Movie, TodayItem
 
-# ============================================================
-# DESIGN TOKENS — After Hours / Restrained
-# ============================================================
-# Colors
 BG_BASE = "#0A0A0B"
 BG_SURFACE = "#101012"
-BG_ELEVATED = "#16161A"
 BORDER_HAIRLINE = "#1F1F23"
 BORDER_STRONG = "#2A2A2F"
 FG_PRIMARY = "#F5F5F4"
 FG_SECONDARY = "#A1A1A6"
 FG_TERTIARY = "#6B6B70"
-ACCENT = "#C8FF00"
 
-# Layout
-SIDEBAR_WIDTH = "200px"
 DATE_STICKY_TOP = {"initial": "96px", "md": "44px"}
 
 
-# ============================================================
-# Small helpers
-# ============================================================
 def _tag(text):
-    """Mono-caps category tag (CONCERT / SPECTACLE / EXPO / FILM)."""
     return rx.el.span(text, class_name="synkos-tag")
-
-
-def _meta_row(*children):
-    """One-line mono-caps metadata row."""
-    return rx.hstack(*children, spacing="2", align_items="center")
 
 
 def _venue_link(location, city_computed):

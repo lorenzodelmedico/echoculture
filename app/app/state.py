@@ -154,7 +154,6 @@ class State(rx.State):
     # Per-category cursors (event_date upper bound already fetched).
     _concerts_end_date: date = date.today() + timedelta(weeks=_INITIAL_WINDOW_WEEKS)
     _spectacles_end_date: date = date.today() + timedelta(weeks=_INITIAL_WINDOW_WEEKS)
-    _expositions_end_date: date = date.today() + timedelta(weeks=_INITIAL_WINDOW_WEEKS)
 
     # First-load gates so we only hit the DB once per category per session.
     concerts_loaded: bool = False
@@ -170,7 +169,8 @@ class State(rx.State):
     selected_price_range: str = "Tous"
     selected_today_type: str = "Tous"
     search_query: str = ""
-    sidebar_open: bool = False
+    search_events: list[Event] = []
+    search_movies: list[Movie] = []
     skills_open: bool = False
     expanded_skill: str = ""
 
@@ -181,9 +181,6 @@ class State(rx.State):
 
     def toggle_skill(self, name: str):
         self.expanded_skill = "" if self.expanded_skill == name else name
-
-    def set_tab(self, tab: str):
-        self.active_tab = tab
 
     def go_today(self):
         return rx.redirect("/")
@@ -486,18 +483,38 @@ class State(rx.State):
     def set_today_type(self, value: str):
         self.selected_today_type = value
 
+    def _search_db(self, query: str) -> None:
+        q = f"%{query}%"
+        cutoff = date.today() - timedelta(days=1)
+        try:
+            with rx.session() as session:
+                self.search_events = list(  # type: ignore[assignment]
+                    session.exec(
+                        select(Event)
+                        .where(col(Event.event_date) >= cutoff)
+                        .where(col(Event.title).ilike(q) | col(Event.location).ilike(q))
+                        .order_by(Event.event_date)
+                    ).all()
+                )
+                self.search_movies = list(  # type: ignore[assignment]
+                    session.exec(
+                        select(Movie)
+                        .where(col(Movie.release_date) >= cutoff)
+                        .where(col(Movie.title).ilike(q))
+                        .order_by(Movie.release_date)
+                    ).all()
+                )
+        except Exception as e:
+            logging.warning(f"_search_db: {e}")
+
     def set_search(self, value: str):
         self.search_query = value
-        # First non-empty keystroke lazy-loads every category so search spans all
-        # tabs. _ensure_* short-circuits on subsequent keystrokes.
-        if value.strip():
-            self._ensure_concerts()
-            self._ensure_spectacles()
-            self._ensure_expositions()
-            self._ensure_movies()
-
-    def toggle_sidebar(self):
-        self.sidebar_open = not self.sidebar_open
+        q = value.strip()
+        if len(q) >= 2:
+            self._search_db(q)
+        else:
+            self.search_events = []
+            self.search_movies = []
 
     # ---- Load-more (IntersectionObserver-triggered) ----
 
@@ -581,8 +598,6 @@ class State(rx.State):
                 for row in rows
             ]
         except Exception as e:
-            import logging
-
             logging.warning(f"Could not load fct_today: {e}")
             self.today_items = []
 
@@ -702,39 +717,33 @@ class State(rx.State):
     def search_results(self) -> list[SearchResult]:
         if not self.search_query.strip():
             return []
-
-        query_lower = self.search_query.lower().strip()
+        q = self.search_query.lower().strip()
         results = []
-
-        for event_list in (self.concerts, self.spectacles, self.expositions):
-            for event in event_list:
-                score = max(
-                    _score_title(query_lower, event.title),
-                    _score_location(query_lower, event.location or ""),
-                    _score_location(query_lower, event.city_computed or ""),
+        for event in self.search_events:
+            score = max(
+                _score_title(q, event.title),
+                _score_location(q, event.location or ""),
+                _score_location(q, event.city_computed or ""),
+                40,  # DB ILIKE already matched — floor at 40
+            )
+            results.append(
+                SearchResult(
+                    type=event.category or "event",
+                    title=event.title,
+                    score=score,
+                    event=event,
                 )
-                if score > 0:
-                    results.append(
-                        SearchResult(
-                            type=event.category or "event",
-                            title=event.title,
-                            score=score,
-                            event=event,
-                        )
-                    )
-
-        for movie in self.movies:
-            score = _score_title(query_lower, movie.title)
-            if score > 0:
-                results.append(
-                    SearchResult(
-                        type="movie",
-                        title=movie.title,
-                        score=score,
-                        movie=movie,
-                    )
+            )
+        for movie in self.search_movies:
+            score = max(_score_title(q, movie.title), 40)
+            results.append(
+                SearchResult(
+                    type="movie",
+                    title=movie.title,
+                    score=score,
+                    movie=movie,
                 )
-
+            )
         results.sort(key=lambda x: (-x.score, x.title))
         return results
 
@@ -758,20 +767,6 @@ class State(rx.State):
             else:
                 types.add("Concerts")
         return ["Tous"] + sorted(types)
-
-    @rx.var
-    def filtered_today_items(self) -> list[TodayItem]:
-        if self.selected_today_type == "Tous":
-            return self.today_items
-        t = self.selected_today_type
-        return [
-            i
-            for i in self.today_items
-            if (t == "Films" and i.item_type == "movie")
-            or (t == "Spectacles" and i.category == "spectacles")
-            or (t == "Expos" and i.category == "expositions")
-            or (t == "Concerts" and i.item_type == "event" and i.category == "concerts")
-        ]
 
     def _today_filter_keep(self, section_name: str) -> bool:
         return self.selected_today_type in ("Tous", section_name)
