@@ -1,6 +1,6 @@
 import reflex as rx
 from .state import State
-from .models import Event, Movie, TodayItem
+from .models import EventData, MovieData, TodayItem
 
 BG_BASE = "#0A0A0B"
 BG_SURFACE = "#101012"
@@ -276,7 +276,7 @@ def skills_popup():
 # ============================================================
 # CARDS
 # ============================================================
-def event_card(ev: Event):
+def event_card(ev: EventData):
     return rx.box(
         # top row: tag + price
         rx.hstack(
@@ -321,7 +321,7 @@ def event_card(ev: Event):
     )
 
 
-def movie_card(m: Movie):
+def movie_card(m: MovieData):
     return rx.box(
         # top row: tag + (genres mono-text on right, optional)
         rx.hstack(
@@ -1000,7 +1000,7 @@ def about_page() -> rx.Component:
                             },
                         ),
                         rx.el.span(
-                            "Data Engineer · Bordeaux",
+                            "IT Engineer· Bordeaux",
                             class_name="synkos-mono",
                             style={"color": FG_TERTIARY},
                         ),

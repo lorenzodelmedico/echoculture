@@ -1,6 +1,12 @@
 import reflex as rx
-from .models import Event, EventGroup, Movie, MovieGroup, SearchResult, TodayItem
-from sqlmodel import select, col
+from .models import (
+    EventData,
+    EventGroup,
+    MovieData,
+    MovieGroup,
+    SearchResult,
+    TodayItem,
+)
 import itertools
 from datetime import date, datetime, timedelta
 import psycopg2
@@ -15,9 +21,9 @@ def _schema_version() -> str:
     """SHA-1 of the cached models' field names — changes when models change,
     invalidating any cached payloads that no longer match the current shape.
     Bump _CACHE_SALT to force-invalidate all client caches without a model change."""
-    _CACHE_SALT = "v3"
+    _CACHE_SALT = "v5"
     fingerprint: dict = {"_salt": _CACHE_SALT}
-    for cls in (Event, Movie, TodayItem):
+    for cls in (EventData, MovieData, TodayItem):
         fields = getattr(cls, "model_fields", None) or getattr(cls, "__fields__", {})
         fingerprint[cls.__name__] = sorted(fields.keys())
     payload = json.dumps(fingerprint, sort_keys=True).encode()
@@ -30,14 +36,11 @@ _SCHEMA_VERSION = _schema_version()
 def _serialize_models(items: list) -> str:
     out = []
     for item in items:
-        if hasattr(item, "model_dump"):
-            out.append(item.model_dump(mode="json"))
-        else:
-            d = item.dict() if hasattr(item, "dict") else dict(item)
-            for k, v in list(d.items()):
-                if hasattr(v, "isoformat"):
-                    d[k] = v.isoformat()
-            out.append(d)
+        d = {k: v for k, v in item.__dict__.items() if not k.startswith("_")}
+        for k, v in list(d.items()):
+            if hasattr(v, "isoformat"):
+                d[k] = v.isoformat()
+        out.append(d)
     return json.dumps(out, separators=(",", ":"))
 
 
@@ -82,11 +85,11 @@ def _score_location(query_lower: str, location: str) -> int:
 
 
 def _apply_event_filters(
-    events: list[Event],
+    events: list[EventData],
     selected_family: str,
     selected_city: str,
     selected_price_range: str,
-) -> list[Event]:
+) -> list[EventData]:
     if selected_family != "All":
         events = [e for e in events if e.genre_family == selected_family]
     if selected_city != "All":
@@ -109,7 +112,7 @@ def _apply_event_filters(
     return events
 
 
-def _group_by_date(events: list[Event]) -> list[EventGroup]:
+def _group_by_date(events: list[EventData]) -> list[EventGroup]:
     if not events:
         return []
     current_year = date.today().year
@@ -134,10 +137,10 @@ class State(rx.State):
     active_tab: str = "concerts"
 
     # Per-category lists — loaded lazily on tab visit, then cached client-side.
-    concerts: list[Event] = []
-    spectacles: list[Event] = []
-    expositions: list[Event] = []
-    movies: list[Movie] = []
+    concerts: list[EventData] = []
+    spectacles: list[EventData] = []
+    expositions: list[EventData] = []
+    movies: list[MovieData] = []
     today_items: list[TodayItem] = []
 
     # localStorage-backed cache (stale-while-revalidate). Strings store JSON.
@@ -169,8 +172,8 @@ class State(rx.State):
     selected_price_range: str = "Tous"
     selected_today_type: str = "Tous"
     search_query: str = ""
-    search_events: list[Event] = []
-    search_movies: list[Movie] = []
+    search_events: list[EventData] = []
+    search_movies: list[MovieData] = []
     skills_open: bool = False
     expanded_skill: str = ""
 
@@ -200,52 +203,60 @@ class State(rx.State):
     def go_about(self):
         return rx.redirect("/about")
 
-    # ---- DB helpers ----
+    # ---- DB helpers (psycopg2 — avoids SQLAlchemy session expiry) ----
 
-    def _fetch_category(self, category: str, end_date: date) -> list[Event]:
+    def _pg(self):
+        return psycopg2.connect(os.environ["POSTGRES_URL"])
+
+    def _fetch_category(self, category: str, end_date: date) -> list[EventData]:
         cutoff = date.today() - timedelta(days=1)
-        with rx.session() as session:
-            results = list(  # type: ignore[return-value]
-                session.exec(
-                    select(Event)
-                    .where(col(Event.event_date) >= cutoff)
-                    .where(col(Event.event_date) <= end_date)
-                    .where(col(Event.category) == category)
-                    .order_by(Event.event_date)
-                ).all()
-            )
-            session.expunge_all()
-            return results
+        conn = self._pg()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            "SELECT * FROM events WHERE event_date >= %s AND event_date <= %s"
+            " AND category = %s ORDER BY event_date",
+            (cutoff, end_date, category),
+        )
+        rows = [EventData(**dict(r)) for r in cur.fetchall()]
+        cur.close()
+        conn.close()
+        return rows
 
     def _fetch_more_category(
         self, category: str, after: date, until: date
-    ) -> list[Event]:
-        with rx.session() as session:
-            results = list(  # type: ignore[return-value]
-                session.exec(
-                    select(Event)
-                    .where(col(Event.event_date) > after)
-                    .where(col(Event.event_date) <= until)
-                    .where(col(Event.category) == category)
-                    .order_by(Event.event_date)
-                ).all()
-            )
-            session.expunge_all()
-            return results
+    ) -> list[EventData]:
+        conn = self._pg()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            "SELECT * FROM events WHERE event_date > %s AND event_date <= %s"
+            " AND category = %s ORDER BY event_date",
+            (after, until, category),
+        )
+        rows = [EventData(**dict(r)) for r in cur.fetchall()]
+        cur.close()
+        conn.close()
+        return rows
 
-    def _fetch_movies(self, limit: int, after_date=None) -> list[Movie]:
+    def _fetch_movies(self, limit: int, after_date=None) -> list[MovieData]:
         cutoff = date.today() - timedelta(days=1)
-        with rx.session() as session:
-            q = select(Movie)
-            if after_date is not None:
-                q = q.where(col(Movie.release_date) > after_date)
-            else:
-                q = q.where(col(Movie.release_date) >= cutoff)
-            results = list(  # type: ignore[return-value]
-                session.exec(q.order_by(Movie.release_date).limit(limit)).all()
+        conn = self._pg()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        if after_date is not None:
+            cur.execute(
+                "SELECT * FROM movies WHERE release_date > %s"
+                " ORDER BY release_date LIMIT %s",
+                (after_date, limit),
             )
-            session.expunge_all()
-            return results
+        else:
+            cur.execute(
+                "SELECT * FROM movies WHERE release_date >= %s"
+                " ORDER BY release_date LIMIT %s",
+                (cutoff, limit),
+            )
+        rows = [MovieData(**dict(r)) for r in cur.fetchall()]
+        cur.close()
+        conn.close()
+        return rows
 
     # ---- Cache helpers ----
 
@@ -346,25 +357,22 @@ class State(rx.State):
             self.spectacles_loaded = True
 
     def _ensure_expositions(self):
-        # Expositions run for weeks — the scraper writes one row per showtime.
-        # SQL-level DISTINCT ON dedups (title, location) so we ship one row per
-        # unique exhibition instead of hundreds. No load-more needed.
         if self.expositions_loaded:
             return
         try:
             cutoff = date.today() - timedelta(days=1)
-            with rx.session() as session:
-                rows = list(  # type: ignore[assignment]
-                    session.exec(
-                        select(Event)
-                        .where(col(Event.event_date) >= cutoff)
-                        .where(col(Event.category) == "expositions")
-                        .order_by(Event.title, Event.location, Event.event_date)
-                        .distinct(Event.title, Event.location)
-                    ).all()
-                )
-                session.expunge_all()
-            self.expositions = sorted(rows, key=lambda e: e.event_date)
+            conn = self._pg()
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(
+                "SELECT DISTINCT ON (title, location) * FROM events"
+                " WHERE event_date >= %s AND category = 'expositions'"
+                " ORDER BY title, location, event_date",
+                (cutoff,),
+            )
+            events = [EventData(**dict(r)) for r in cur.fetchall()]
+            cur.close()
+            conn.close()
+            self.expositions = sorted(events, key=lambda e: e.event_date)
             self._write_expositions_cache()
         except Exception as e:
             logging.warning(f"_ensure_expositions: {e}")
@@ -416,7 +424,7 @@ class State(rx.State):
         self.active_tab = "concerts"
         if self.concerts_loaded:
             return
-        cached = self._hydrate_from_cache(self.cache_concerts, Event)
+        cached = self._hydrate_from_cache(self.cache_concerts, EventData)
         if cached and self._cache_is_fresh():
             self.concerts = cached
             self._concerts_end_date = max(
@@ -433,7 +441,7 @@ class State(rx.State):
         self.active_tab = "spectacles"
         if self.spectacles_loaded:
             return
-        cached = self._hydrate_from_cache(self.cache_spectacles, Event)
+        cached = self._hydrate_from_cache(self.cache_spectacles, EventData)
         if cached and self._cache_is_fresh():
             self.spectacles = cached
             self._spectacles_end_date = max(
@@ -450,7 +458,7 @@ class State(rx.State):
         self.active_tab = "expositions"
         if self.expositions_loaded:
             return
-        cached = self._hydrate_from_cache(self.cache_expositions, Event)
+        cached = self._hydrate_from_cache(self.cache_expositions, EventData)
         if cached and self._cache_is_fresh():
             self.expositions = cached
             self.expositions_loaded = True
@@ -466,7 +474,7 @@ class State(rx.State):
         self.active_tab = "films"
         if self.movies_loaded:
             return
-        cached = self._hydrate_from_cache(self.cache_movies, Movie)
+        cached = self._hydrate_from_cache(self.cache_movies, MovieData)
         if cached and self._cache_is_fresh():
             self.movies = cached
             self.movies_loaded = True
@@ -496,24 +504,22 @@ class State(rx.State):
         q = f"%{query}%"
         cutoff = date.today() - timedelta(days=1)
         try:
-            with rx.session() as session:
-                self.search_events = list(  # type: ignore[assignment]
-                    session.exec(
-                        select(Event)
-                        .where(col(Event.event_date) >= cutoff)
-                        .where(col(Event.title).ilike(q) | col(Event.location).ilike(q))
-                        .order_by(Event.event_date)
-                    ).all()
-                )
-                self.search_movies = list(  # type: ignore[assignment]
-                    session.exec(
-                        select(Movie)
-                        .where(col(Movie.release_date) >= cutoff)
-                        .where(col(Movie.title).ilike(q))
-                        .order_by(Movie.release_date)
-                    ).all()
-                )
-                session.expunge_all()
+            conn = self._pg()
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(
+                "SELECT * FROM events WHERE event_date >= %s"
+                " AND (title ILIKE %s OR location ILIKE %s) ORDER BY event_date",
+                (cutoff, q, q),
+            )
+            self.search_events = [EventData(**dict(r)) for r in cur.fetchall()]
+            cur.execute(
+                "SELECT * FROM movies WHERE release_date >= %s"
+                " AND title ILIKE %s ORDER BY release_date",
+                (cutoff, q),
+            )
+            self.search_movies = [MovieData(**dict(r)) for r in cur.fetchall()]
+            cur.close()
+            conn.close()
         except Exception as e:
             logging.warning(f"_search_db: {e}")
 
@@ -614,7 +620,7 @@ class State(rx.State):
     # ---- Computed vars ----
 
     @rx.var
-    def current_events(self) -> list[Event]:
+    def current_events(self) -> list[EventData]:
         if self.active_tab == "spectacles":
             return self.spectacles
         if self.active_tab == "expositions":

@@ -35,9 +35,28 @@ class EventPrice(rx.Model, table=True):  # type: ignore
     amount: float
 
 
+class EventData(BaseModel):
+    id: Optional[int] = None
+    source: str = ""
+    title: str = ""
+    event_type: str = ""
+    event_date: date = date.today()
+    location: Optional[str] = None
+    city_computed: Optional[str] = None
+    url_billetterie: Optional[str] = None
+    genre_family: Optional[str] = None
+    raw_id: str = ""
+    source_url: Optional[str] = None
+    min_price: Optional[float] = None
+    max_price: Optional[float] = None
+    free_label: Optional[str] = None
+    price_tag: Optional[str] = None
+    category: Optional[str] = "concerts"
+
+
 class EventGroup(BaseModel):
     date_display: str
-    events: List[Event]
+    events: List[EventData]
 
 
 class Movie(rx.Model, table=True):  # type: ignore
@@ -54,17 +73,29 @@ class Movie(rx.Model, table=True):  # type: ignore
     url: Optional[str] = None
 
 
+class MovieData(BaseModel):
+    id: Optional[int] = None
+    title: str = ""
+    director: Optional[str] = None
+    producer: Optional[str] = None
+    genres: Optional[str] = None
+    synopsis: Optional[str] = None
+    release_date: Optional[date] = None
+    duration: Optional[str] = None
+    url: Optional[str] = None
+
+
 class MovieGroup(BaseModel):
     date_display: str
-    movies: List[Movie]
+    movies: List[MovieData]
 
 
 class SearchResult(BaseModel):
-    type: str  # "event" or "movie"
+    type: str
     title: str
     score: int
-    event: Optional[Event] = None
-    movie: Optional[Movie] = None
+    event: Optional[EventData] = None
+    movie: Optional[MovieData] = None
 
 
 class TodayItem(BaseModel):
