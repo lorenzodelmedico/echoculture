@@ -15,7 +15,7 @@ def _schema_version() -> str:
     """SHA-1 of the cached models' field names — changes when models change,
     invalidating any cached payloads that no longer match the current shape.
     Bump _CACHE_SALT to force-invalidate all client caches without a model change."""
-    _CACHE_SALT = "v2"
+    _CACHE_SALT = "v3"
     fingerprint: dict = {"_salt": _CACHE_SALT}
     for cls in (Event, Movie, TodayItem):
         fields = getattr(cls, "model_fields", None) or getattr(cls, "__fields__", {})
@@ -205,7 +205,7 @@ class State(rx.State):
     def _fetch_category(self, category: str, end_date: date) -> list[Event]:
         cutoff = date.today() - timedelta(days=1)
         with rx.session() as session:
-            return list(  # type: ignore[return-value]
+            results = list(  # type: ignore[return-value]
                 session.exec(
                     select(Event)
                     .where(col(Event.event_date) >= cutoff)
@@ -214,12 +214,14 @@ class State(rx.State):
                     .order_by(Event.event_date)
                 ).all()
             )
+            session.expunge_all()
+            return results
 
     def _fetch_more_category(
         self, category: str, after: date, until: date
     ) -> list[Event]:
         with rx.session() as session:
-            return list(  # type: ignore[return-value]
+            results = list(  # type: ignore[return-value]
                 session.exec(
                     select(Event)
                     .where(col(Event.event_date) > after)
@@ -228,6 +230,8 @@ class State(rx.State):
                     .order_by(Event.event_date)
                 ).all()
             )
+            session.expunge_all()
+            return results
 
     def _fetch_movies(self, limit: int, after_date=None) -> list[Movie]:
         cutoff = date.today() - timedelta(days=1)
@@ -237,9 +241,11 @@ class State(rx.State):
                 q = q.where(col(Movie.release_date) > after_date)
             else:
                 q = q.where(col(Movie.release_date) >= cutoff)
-            return list(  # type: ignore[return-value]
+            results = list(  # type: ignore[return-value]
                 session.exec(q.order_by(Movie.release_date).limit(limit)).all()
             )
+            session.expunge_all()
+            return results
 
     # ---- Cache helpers ----
 
@@ -348,13 +354,16 @@ class State(rx.State):
         try:
             cutoff = date.today() - timedelta(days=1)
             with rx.session() as session:
-                rows = session.exec(
-                    select(Event)
-                    .where(col(Event.event_date) >= cutoff)
-                    .where(col(Event.category) == "expositions")
-                    .order_by(Event.title, Event.location, Event.event_date)
-                    .distinct(Event.title, Event.location)
-                ).all()
+                rows = list(  # type: ignore[assignment]
+                    session.exec(
+                        select(Event)
+                        .where(col(Event.event_date) >= cutoff)
+                        .where(col(Event.category) == "expositions")
+                        .order_by(Event.title, Event.location, Event.event_date)
+                        .distinct(Event.title, Event.location)
+                    ).all()
+                )
+                session.expunge_all()
             self.expositions = sorted(rows, key=lambda e: e.event_date)
             self._write_expositions_cache()
         except Exception as e:
@@ -504,6 +513,7 @@ class State(rx.State):
                         .order_by(Movie.release_date)
                     ).all()
                 )
+                session.expunge_all()
         except Exception as e:
             logging.warning(f"_search_db: {e}")
 
