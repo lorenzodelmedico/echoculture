@@ -152,6 +152,7 @@ services:
     depends_on:
       - echoculture-ui
     restart: always
+    profiles: ["cloudflare"]
 
   ollama:
     image: ollama/ollama

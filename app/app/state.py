@@ -2,10 +2,66 @@ import reflex as rx
 from .models import Event, EventGroup, Movie, MovieGroup, SearchResult, TodayItem
 from sqlmodel import select, col
 import itertools
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import psycopg2
 import psycopg2.extras
 import os
+import json
+import hashlib
+import logging
+
+
+def _schema_version() -> str:
+    """SHA-1 of the cached models' field names — changes when models change,
+    invalidating any cached payloads that no longer match the current shape.
+    Bump _CACHE_SALT to force-invalidate all client caches without a model change."""
+    _CACHE_SALT = "v2"
+    fingerprint: dict = {"_salt": _CACHE_SALT}
+    for cls in (Event, Movie, TodayItem):
+        fields = getattr(cls, "model_fields", None) or getattr(cls, "__fields__", {})
+        fingerprint[cls.__name__] = sorted(fields.keys())
+    payload = json.dumps(fingerprint, sort_keys=True).encode()
+    return hashlib.sha1(payload).hexdigest()[:12]
+
+
+_SCHEMA_VERSION = _schema_version()
+
+
+def _serialize_models(items: list) -> str:
+    out = []
+    for item in items:
+        if hasattr(item, "model_dump"):
+            out.append(item.model_dump(mode="json"))
+        else:
+            d = item.dict() if hasattr(item, "dict") else dict(item)
+            for k, v in list(d.items()):
+                if hasattr(v, "isoformat"):
+                    d[k] = v.isoformat()
+            out.append(d)
+    return json.dumps(out, separators=(",", ":"))
+
+
+_DATE_FIELDS = {"event_date", "release_date", "display_date"}
+
+
+def _deserialize_models(s: str, model_cls):
+    if not s:
+        return []
+    try:
+        rows = json.loads(s)
+        result = []
+        for row in rows:
+            for field in _DATE_FIELDS:
+                if field in row and isinstance(row[field], str) and row[field]:
+                    try:
+                        row[field] = date.fromisoformat(row[field])
+                    except (ValueError, AttributeError):
+                        pass
+            result.append(model_cls(**row))
+        return result
+    except Exception as e:
+        logging.warning(f"Cache deserialize failed for {model_cls.__name__}: {e}")
+        return []
 
 
 def _score_title(query_lower: str, title: str) -> int:
@@ -25,48 +81,39 @@ def _score_location(query_lower: str, location: str) -> int:
     return 0
 
 
-def _filter_and_group_events(
+def _apply_event_filters(
     events: list[Event],
-    category: str,
     selected_family: str,
     selected_city: str,
     selected_price_range: str,
-) -> list[EventGroup]:
-    if not events:
-        return []
-
-    today = date.today()
-    current_year = today.year
-
-    filtered = [
-        e
-        for e in events
-        if e.event_date >= today - timedelta(days=1) and e.category == category
-    ]
+) -> list[Event]:
     if selected_family != "All":
-        filtered = [e for e in filtered if e.genre_family == selected_family]
+        events = [e for e in events if e.genre_family == selected_family]
     if selected_city != "All":
-        filtered = [e for e in filtered if e.city_computed == selected_city]
+        events = [e for e in events if e.city_computed == selected_city]
 
     if selected_price_range == "Gratuit":
-        filtered = [e for e in filtered if e.min_price == 0.0]
+        events = [e for e in events if e.min_price == 0.0]
     elif selected_price_range == "Payant":
-        filtered = [e for e in filtered if e.price_tag == "payant"]
-    elif selected_price_range == "< 10\u20ac":
-        filtered = [
-            e for e in filtered if e.min_price is not None and 0 < e.min_price < 10
+        events = [e for e in events if e.price_tag == "payant"]
+    elif selected_price_range == "< 10€":
+        events = [e for e in events if e.min_price is not None and 0 < e.min_price < 10]
+    elif selected_price_range == "10-20€":
+        events = [
+            e for e in events if e.min_price is not None and 10 <= e.min_price <= 20
         ]
-    elif selected_price_range == "10-20\u20ac":
-        filtered = [
-            e for e in filtered if e.min_price is not None and 10 <= e.min_price <= 20
-        ]
-    elif selected_price_range == "20\u20ac+":
-        filtered = [e for e in filtered if e.min_price is not None and e.min_price > 20]
+    elif selected_price_range == "20€+":
+        events = [e for e in events if e.min_price is not None and e.min_price > 20]
     elif selected_price_range == "Inconnu":
-        filtered = [e for e in filtered if e.min_price is None and e.price_tag is None]
+        events = [e for e in events if e.min_price is None and e.price_tag is None]
+    return events
 
-    sorted_events = sorted(filtered, key=lambda x: x.event_date)
 
+def _group_by_date(events: list[Event]) -> list[EventGroup]:
+    if not events:
+        return []
+    current_year = date.today().year
+    sorted_events = sorted(events, key=lambda x: x.event_date)
     res = []
     for date_obj, group in itertools.groupby(sorted_events, key=lambda x: x.event_date):
         if date_obj.year != current_year:
@@ -77,16 +124,45 @@ def _filter_and_group_events(
     return res
 
 
-_INITIAL_WINDOW_WEEKS = 2
-_MORE_WINDOW_WEEKS = 3
+_INITIAL_WINDOW_WEEKS = 1
+_MORE_WINDOW_WEEKS = 1
+_MOVIES_INITIAL_LIMIT = 30
+_MOVIES_MORE_LIMIT = 30
 
 
 class State(rx.State):
     active_tab: str = "concerts"
-    events: list[Event] = []
+
+    # Per-category lists — loaded lazily on tab visit, then cached client-side.
+    concerts: list[Event] = []
+    spectacles: list[Event] = []
+    expositions: list[Event] = []
     movies: list[Movie] = []
     today_items: list[TodayItem] = []
-    _events_end_date: date = date.today() + timedelta(weeks=_INITIAL_WINDOW_WEEKS)
+
+    # localStorage-backed cache (stale-while-revalidate). Strings store JSON.
+    # The version is a hash of the model schema — when a model field changes,
+    # _SCHEMA_VERSION changes and all caches are auto-invalidated on next read.
+    cache_concerts: str = rx.LocalStorage("")
+    cache_spectacles: str = rx.LocalStorage("")
+    cache_expositions: str = rx.LocalStorage("")
+    cache_movies: str = rx.LocalStorage("")
+    cache_today: str = rx.LocalStorage("")
+    cache_version: str = rx.LocalStorage("")
+    cache_updated_at: str = rx.LocalStorage("")
+
+    # Per-category cursors (event_date upper bound already fetched).
+    _concerts_end_date: date = date.today() + timedelta(weeks=_INITIAL_WINDOW_WEEKS)
+    _spectacles_end_date: date = date.today() + timedelta(weeks=_INITIAL_WINDOW_WEEKS)
+    _expositions_end_date: date = date.today() + timedelta(weeks=_INITIAL_WINDOW_WEEKS)
+
+    # First-load gates so we only hit the DB once per category per session.
+    concerts_loaded: bool = False
+    spectacles_loaded: bool = False
+    expositions_loaded: bool = False
+    movies_loaded: bool = False
+    today_loaded: bool = False
+
     events_loading: bool = False
     selected_family: str = "All"
     selected_city: str = "All"
@@ -95,6 +171,16 @@ class State(rx.State):
     selected_today_type: str = "Tous"
     search_query: str = ""
     sidebar_open: bool = False
+    skills_open: bool = False
+    expanded_skill: str = ""
+
+    def toggle_skills(self):
+        self.skills_open = not self.skills_open
+        if not self.skills_open:
+            self.expanded_skill = ""
+
+    def toggle_skill(self, name: str):
+        self.expanded_skill = "" if self.expanded_skill == name else name
 
     def set_tab(self, tab: str):
         self.active_tab = tab
@@ -114,25 +200,276 @@ class State(rx.State):
     def go_films(self):
         return rx.redirect("/films")
 
+    def go_about(self):
+        return rx.redirect("/about")
+
+    # ---- DB helpers ----
+
+    def _fetch_category(self, category: str, end_date: date) -> list[Event]:
+        cutoff = date.today() - timedelta(days=1)
+        with rx.session() as session:
+            return list(  # type: ignore[return-value]
+                session.exec(
+                    select(Event)
+                    .where(col(Event.event_date) >= cutoff)
+                    .where(col(Event.event_date) <= end_date)
+                    .where(col(Event.category) == category)
+                    .order_by(Event.event_date)
+                ).all()
+            )
+
+    def _fetch_more_category(
+        self, category: str, after: date, until: date
+    ) -> list[Event]:
+        with rx.session() as session:
+            return list(  # type: ignore[return-value]
+                session.exec(
+                    select(Event)
+                    .where(col(Event.event_date) > after)
+                    .where(col(Event.event_date) <= until)
+                    .where(col(Event.category) == category)
+                    .order_by(Event.event_date)
+                ).all()
+            )
+
+    def _fetch_movies(self, limit: int, after_date=None) -> list[Movie]:
+        cutoff = date.today() - timedelta(days=1)
+        with rx.session() as session:
+            q = select(Movie)
+            if after_date is not None:
+                q = q.where(col(Movie.release_date) > after_date)
+            else:
+                q = q.where(col(Movie.release_date) >= cutoff)
+            return list(  # type: ignore[return-value]
+                session.exec(q.order_by(Movie.release_date).limit(limit)).all()
+            )
+
+    # ---- Cache helpers ----
+
+    def _hydrate_from_cache(self, cached_str: str, model_cls):
+        """Returns deserialized list, or None on miss / version mismatch."""
+        if not cached_str:
+            return None
+        if self.cache_version != _SCHEMA_VERSION:
+            # Schema drifted since this cache was written — drop everything.
+            self._invalidate_caches()
+            return None
+        items = _deserialize_models(cached_str, model_cls)
+        return items or None
+
+    def _invalidate_caches(self):
+        self.cache_concerts = ""
+        self.cache_spectacles = ""
+        self.cache_expositions = ""
+        self.cache_movies = ""
+        self.cache_today = ""
+        self.cache_version = ""
+        self.cache_updated_at = ""
+
+    def _write_concerts_cache(self):
+        self.cache_concerts = _serialize_models(self.concerts)
+        self.cache_version = _SCHEMA_VERSION
+        self.cache_updated_at = datetime.utcnow().isoformat()
+
+    def _write_spectacles_cache(self):
+        self.cache_spectacles = _serialize_models(self.spectacles)
+        self.cache_version = _SCHEMA_VERSION
+        self.cache_updated_at = datetime.utcnow().isoformat()
+
+    def _write_expositions_cache(self):
+        self.cache_expositions = _serialize_models(self.expositions)
+        self.cache_version = _SCHEMA_VERSION
+        self.cache_updated_at = datetime.utcnow().isoformat()
+
+    def _write_movies_cache(self):
+        self.cache_movies = _serialize_models(self.movies)
+        self.cache_version = _SCHEMA_VERSION
+        self.cache_updated_at = datetime.utcnow().isoformat()
+
+    def _write_today_cache(self):
+        self.cache_today = _serialize_models(self.today_items)
+        self.cache_version = _SCHEMA_VERSION
+        self.cache_updated_at = datetime.utcnow().isoformat()
+
+    # ---- Cache freshness ----
+
+    _CACHE_MAX_AGE_SECONDS = 3600  # 1h — use cache if newer than this, else refetch
+
+    def _cache_age_seconds(self) -> int:
+        if not self.cache_updated_at:
+            return -1
+        try:
+            ts = datetime.fromisoformat(self.cache_updated_at)
+            return int((datetime.utcnow() - ts).total_seconds())
+        except Exception:
+            return -1
+
+    def _cache_is_fresh(self) -> bool:
+        age = self._cache_age_seconds()
+        return 0 <= age < self._CACHE_MAX_AGE_SECONDS
+
+    # ---- Synchronous ensure helpers (fetch + cache write, idempotent) ----
+    # Fail-soft: any DB error sets the loaded flag anyway so the skeleton
+    # never gets stuck. We log but never surface errors to the user.
+
+    def _ensure_concerts(self):
+        if self.concerts_loaded:
+            return
+        try:
+            self._concerts_end_date = date.today() + timedelta(
+                weeks=_INITIAL_WINDOW_WEEKS
+            )
+            self.concerts = self._fetch_category("concerts", self._concerts_end_date)
+            self._write_concerts_cache()
+        except Exception as e:
+            logging.warning(f"_ensure_concerts: {e}")
+        finally:
+            self.concerts_loaded = True
+
+    def _ensure_spectacles(self):
+        if self.spectacles_loaded:
+            return
+        try:
+            self._spectacles_end_date = date.today() + timedelta(
+                weeks=_INITIAL_WINDOW_WEEKS
+            )
+            self.spectacles = self._fetch_category(
+                "spectacles", self._spectacles_end_date
+            )
+            self._write_spectacles_cache()
+        except Exception as e:
+            logging.warning(f"_ensure_spectacles: {e}")
+        finally:
+            self.spectacles_loaded = True
+
+    def _ensure_expositions(self):
+        # Expositions run for weeks — the scraper writes one row per showtime.
+        # SQL-level DISTINCT ON dedups (title, location) so we ship one row per
+        # unique exhibition instead of hundreds. No load-more needed.
+        if self.expositions_loaded:
+            return
+        try:
+            cutoff = date.today() - timedelta(days=1)
+            with rx.session() as session:
+                rows = session.exec(
+                    select(Event)
+                    .where(col(Event.event_date) >= cutoff)
+                    .where(col(Event.category) == "expositions")
+                    .order_by(Event.title, Event.location, Event.event_date)
+                    .distinct(Event.title, Event.location)
+                ).all()
+            self.expositions = sorted(rows, key=lambda e: e.event_date)
+            self._write_expositions_cache()
+        except Exception as e:
+            logging.warning(f"_ensure_expositions: {e}")
+        finally:
+            self.expositions_loaded = True
+
+    def _ensure_movies(self):
+        if self.movies_loaded:
+            return
+        try:
+            self.movies = self._fetch_movies(_MOVIES_INITIAL_LIMIT)
+            self._write_movies_cache()
+        except Exception as e:
+            logging.warning(f"_ensure_movies: {e}")
+        finally:
+            self.movies_loaded = True
+
+    def _ensure_today(self):
+        if self.today_loaded:
+            return
+        try:
+            self._load_today()
+            self._write_today_cache()
+        except Exception as e:
+            logging.warning(f"_ensure_today: {e}")
+        finally:
+            self.today_loaded = True
+
+    # ---- Page on_load handlers ----
+    # Sync only. Pattern: if a fresh-enough localStorage cache exists, use it
+    # and skip the DB hit entirely. Otherwise re-fetch and write the cache.
+    # No async generators (Reflex 0.8.x async-gen support is brittle).
+
     def on_load_today(self):
         self.active_tab = "today"
-        self.load_events()
+        if self.today_loaded:
+            return
+        cached = self._hydrate_from_cache(self.cache_today, TodayItem)
+        if cached and self._cache_is_fresh():
+            self.today_items = cached
+            self.today_loaded = True
+            return
+        if cached:
+            # Use stale cache as a placeholder so skeleton doesn't show
+            self.today_items = cached
+        self._ensure_today()
 
     def on_load_concerts(self):
         self.active_tab = "concerts"
-        self.load_events()
+        if self.concerts_loaded:
+            return
+        cached = self._hydrate_from_cache(self.cache_concerts, Event)
+        if cached and self._cache_is_fresh():
+            self.concerts = cached
+            self._concerts_end_date = max(
+                (e.event_date for e in cached),
+                default=date.today() + timedelta(weeks=_INITIAL_WINDOW_WEEKS),
+            )
+            self.concerts_loaded = True
+            return
+        if cached:
+            self.concerts = cached
+        self._ensure_concerts()
 
     def on_load_spectacles(self):
         self.active_tab = "spectacles"
-        self.load_events()
+        if self.spectacles_loaded:
+            return
+        cached = self._hydrate_from_cache(self.cache_spectacles, Event)
+        if cached and self._cache_is_fresh():
+            self.spectacles = cached
+            self._spectacles_end_date = max(
+                (e.event_date for e in cached),
+                default=date.today() + timedelta(weeks=_INITIAL_WINDOW_WEEKS),
+            )
+            self.spectacles_loaded = True
+            return
+        if cached:
+            self.spectacles = cached
+        self._ensure_spectacles()
 
     def on_load_expositions(self):
         self.active_tab = "expositions"
-        self.load_events()
+        if self.expositions_loaded:
+            return
+        cached = self._hydrate_from_cache(self.cache_expositions, Event)
+        if cached and self._cache_is_fresh():
+            self.expositions = cached
+            self.expositions_loaded = True
+            return
+        if cached:
+            self.expositions = cached
+        self._ensure_expositions()
+
+    def on_load_about(self):
+        self.active_tab = "about"
 
     def on_load_films(self):
         self.active_tab = "films"
-        self.load_events()
+        if self.movies_loaded:
+            return
+        cached = self._hydrate_from_cache(self.cache_movies, Movie)
+        if cached and self._cache_is_fresh():
+            self.movies = cached
+            self.movies_loaded = True
+            return
+        if cached:
+            self.movies = cached
+        self._ensure_movies()
+
+    # ---- Setters ----
 
     def set_family(self, value: str):
         self.selected_family = value
@@ -151,9 +488,57 @@ class State(rx.State):
 
     def set_search(self, value: str):
         self.search_query = value
+        # First non-empty keystroke lazy-loads every category so search spans all
+        # tabs. _ensure_* short-circuits on subsequent keystrokes.
+        if value.strip():
+            self._ensure_concerts()
+            self._ensure_spectacles()
+            self._ensure_expositions()
+            self._ensure_movies()
 
     def toggle_sidebar(self):
         self.sidebar_open = not self.sidebar_open
+
+    # ---- Load-more (IntersectionObserver-triggered) ----
+
+    def load_more_events(self):
+        if self.events_loading or self.search_query.strip():
+            return
+        self.events_loading = True
+        tab = self.active_tab
+        if tab == "concerts":
+            new_end = self._concerts_end_date + timedelta(weeks=_MORE_WINDOW_WEEKS)
+            more = self._fetch_more_category(
+                "concerts", self._concerts_end_date, new_end
+            )
+            if more:
+                self.concerts = self.concerts + more
+                self._write_concerts_cache()
+            self._concerts_end_date = new_end
+        elif tab == "spectacles":
+            new_end = self._spectacles_end_date + timedelta(weeks=_MORE_WINDOW_WEEKS)
+            more = self._fetch_more_category(
+                "spectacles", self._spectacles_end_date, new_end
+            )
+            if more:
+                self.spectacles = self.spectacles + more
+                self._write_spectacles_cache()
+            self._spectacles_end_date = new_end
+        elif tab == "expositions":
+            # Expositions are fully loaded upfront via DISTINCT ON — no paging.
+            pass
+        elif tab == "films":
+            last_date = self.movies[-1].release_date if self.movies else None
+            if last_date is not None:
+                more_movies = self._fetch_movies(
+                    _MOVIES_MORE_LIMIT, after_date=last_date
+                )
+                if more_movies:
+                    self.movies = self.movies + more_movies
+                    self._write_movies_cache()
+        self.events_loading = False
+
+    # ---- Today (fct_today materialised view) ----
 
     def _load_today(self) -> None:
         try:
@@ -201,65 +586,30 @@ class State(rx.State):
             logging.warning(f"Could not load fct_today: {e}")
             self.today_items = []
 
-    def load_events(self):
-        cutoff = date.today() - timedelta(days=1)
-        self._events_end_date = date.today() + timedelta(weeks=_INITIAL_WINDOW_WEEKS)
-        with rx.session() as session:
-            self.events = session.exec(
-                select(Event)
-                .where(col(Event.event_date) >= cutoff)
-                .where(col(Event.event_date) <= self._events_end_date)
-                .order_by(Event.event_date)
-            ).all()
-            self.movies = session.exec(
-                select(Movie)
-                .where(col(Movie.release_date) >= cutoff)
-                .order_by(Movie.release_date)
-            ).all()
-        self._load_today()
+    # ---- Computed vars ----
 
-    def load_more_events(self):
-        if self.events_loading:
-            return
-        self.events_loading = True
-        new_end = self._events_end_date + timedelta(weeks=_MORE_WINDOW_WEEKS)
-        with rx.session() as session:
-            more = session.exec(
-                select(Event)
-                .where(col(Event.event_date) > self._events_end_date)
-                .where(col(Event.event_date) <= new_end)
-                .order_by(Event.event_date)
-            ).all()
-        self.events = self.events + more
-        self._events_end_date = new_end
-        self.events_loading = False
+    @rx.var
+    def current_events(self) -> list[Event]:
+        if self.active_tab == "spectacles":
+            return self.spectacles
+        if self.active_tab == "expositions":
+            return self.expositions
+        return self.concerts
 
     @rx.var
     def unique_families(self) -> list[str]:
-        cat = self.active_tab
         families = sorted(
-            list(
-                set(
-                    e.genre_family
-                    for e in self.events
-                    if e.genre_family and e.category == cat
-                )
-            )
+            set(e.genre_family for e in self.current_events if e.genre_family)
         )
         return ["All"] + families
 
     @rx.var
     def unique_cities(self) -> list[str]:
-        cat = self.active_tab
         cities = sorted(
-            list(
-                set(
-                    e.city_computed
-                    for e in self.events
-                    if e.city_computed
-                    and e.city_computed != "Autre"
-                    and e.category == cat
-                )
+            set(
+                e.city_computed
+                for e in self.current_events
+                if e.city_computed and e.city_computed != "Autre"
             )
         )
         return ["All"] + cities
@@ -273,82 +623,56 @@ class State(rx.State):
                     genre = g.strip()
                     if genre:
                         genres.add(genre)
-        return ["All"] + sorted(list(genres))
+        return ["All"] + sorted(genres)
 
     @rx.var
     def grouped_events_list(self) -> list[EventGroup]:
-        return _filter_and_group_events(
-            self.events,
-            "concerts",
+        today = date.today()
+        filtered = [
+            e for e in self.concerts if e.event_date >= today - timedelta(days=1)
+        ]
+        filtered = _apply_event_filters(
+            filtered,
             self.selected_family,
             self.selected_city,
             self.selected_price_range,
         )
+        return _group_by_date(filtered)
 
     @rx.var
     def grouped_spectacles_list(self) -> list[EventGroup]:
-        return _filter_and_group_events(
-            self.events,
-            "spectacles",
+        today = date.today()
+        filtered = [
+            e for e in self.spectacles if e.event_date >= today - timedelta(days=1)
+        ]
+        filtered = _apply_event_filters(
+            filtered,
             self.selected_family,
             self.selected_city,
             self.selected_price_range,
         )
+        return _group_by_date(filtered)
 
     @rx.var
     def grouped_expositions_list(self) -> list[EventGroup]:
-        # Expositions are multi-day: the scraper creates one entry per showtime.
-        # Deduplicate by (title, location) keeping only the nearest future date
-        # so each exhibition appears once regardless of how many dates are loaded.
+        # Expositions are multi-day: the scraper writes one row per showtime.
+        # Dedup by (title, location) keeping only the nearest future date.
         today = date.today()
-        current_year = today.year
         filtered = [
-            e
-            for e in self.events
-            if e.event_date >= today - timedelta(days=1) and e.category == "expositions"
+            e for e in self.expositions if e.event_date >= today - timedelta(days=1)
         ]
-        if self.selected_family != "All":
-            filtered = [e for e in filtered if e.genre_family == self.selected_family]
-        if self.selected_city != "All":
-            filtered = [e for e in filtered if e.city_computed == self.selected_city]
-        if self.selected_price_range == "Gratuit":
-            filtered = [e for e in filtered if e.min_price == 0.0]
-        elif self.selected_price_range == "Payant":
-            filtered = [e for e in filtered if e.price_tag == "payant"]
-        elif self.selected_price_range == "< 10\u20ac":
-            filtered = [
-                e for e in filtered if e.min_price is not None and 0 < e.min_price < 10
-            ]
-        elif self.selected_price_range == "10-20\u20ac":
-            filtered = [
-                e
-                for e in filtered
-                if e.min_price is not None and 10 <= e.min_price <= 20
-            ]
-        elif self.selected_price_range == "20\u20ac+":
-            filtered = [
-                e for e in filtered if e.min_price is not None and e.min_price > 20
-            ]
-        elif self.selected_price_range == "Inconnu":
-            filtered = [
-                e for e in filtered if e.min_price is None and e.price_tag is None
-            ]
-
+        filtered = _apply_event_filters(
+            filtered,
+            self.selected_family,
+            self.selected_city,
+            self.selected_price_range,
+        )
         seen: dict = {}
         for e in sorted(filtered, key=lambda x: x.event_date):
             key = (e.title, e.location or "")
             if key not in seen:
                 seen[key] = e
-        deduped = sorted(seen.values(), key=lambda x: x.event_date)
-
-        res = []
-        for date_obj, group in itertools.groupby(deduped, key=lambda x: x.event_date):
-            if date_obj.year != current_year:
-                label = date_obj.strftime("%A %d %B %Y").capitalize()
-            else:
-                label = date_obj.strftime("%A %d %B").capitalize()
-            res.append(EventGroup(date_display=label, events=list(group)))
-        return res
+        return _group_by_date(list(seen.values()))
 
     @rx.var
     def grouped_movies_list(self) -> list[MovieGroup]:
@@ -382,21 +706,22 @@ class State(rx.State):
         query_lower = self.search_query.lower().strip()
         results = []
 
-        for event in self.events:
-            score = max(
-                _score_title(query_lower, event.title),
-                _score_location(query_lower, event.location or ""),
-                _score_location(query_lower, event.city_computed or ""),
-            )
-            if score > 0:
-                results.append(
-                    SearchResult(
-                        type=event.category or "event",
-                        title=event.title,
-                        score=score,
-                        event=event,
-                    )
+        for event_list in (self.concerts, self.spectacles, self.expositions):
+            for event in event_list:
+                score = max(
+                    _score_title(query_lower, event.title),
+                    _score_location(query_lower, event.location or ""),
+                    _score_location(query_lower, event.city_computed or ""),
                 )
+                if score > 0:
+                    results.append(
+                        SearchResult(
+                            type=event.category or "event",
+                            title=event.title,
+                            score=score,
+                            event=event,
+                        )
+                    )
 
         for movie in self.movies:
             score = _score_title(query_lower, movie.title)
@@ -416,7 +741,8 @@ class State(rx.State):
     @rx.var
     def has_price_data(self) -> bool:
         return any(
-            e.min_price is not None or e.price_tag is not None for e in self.events
+            e.min_price is not None or e.price_tag is not None
+            for e in self.current_events
         )
 
     @rx.var
@@ -447,6 +773,37 @@ class State(rx.State):
             or (t == "Concerts" and i.item_type == "event" and i.category == "concerts")
         ]
 
+    def _today_filter_keep(self, section_name: str) -> bool:
+        return self.selected_today_type in ("Tous", section_name)
+
+    @rx.var
+    def today_concerts(self) -> list[TodayItem]:
+        if not self._today_filter_keep("Concerts"):
+            return []
+        return [
+            i
+            for i in self.today_items
+            if i.item_type == "event" and i.category == "concerts"
+        ]
+
+    @rx.var
+    def today_spectacles(self) -> list[TodayItem]:
+        if not self._today_filter_keep("Spectacles"):
+            return []
+        return [i for i in self.today_items if i.category == "spectacles"]
+
+    @rx.var
+    def today_expos(self) -> list[TodayItem]:
+        if not self._today_filter_keep("Expos"):
+            return []
+        return [i for i in self.today_items if i.category == "expositions"]
+
+    @rx.var
+    def today_movies(self) -> list[TodayItem]:
+        if not self._today_filter_keep("Films"):
+            return []
+        return [i for i in self.today_items if i.item_type == "movie"]
+
     @rx.var
     def has_multiple_families(self) -> bool:
         return len(self.unique_families) > 1
@@ -462,3 +819,25 @@ class State(rx.State):
     @rx.var
     def has_multiple_today_types(self) -> bool:
         return len(self.today_types_available) > 1
+
+    # Per-tab "show skeleton" flags — true only on the very first visit when
+    # neither in-memory state nor localStorage cache has any data yet.
+    @rx.var
+    def today_loading(self) -> bool:
+        return not self.today_loaded and not self.today_items
+
+    @rx.var
+    def concerts_loading(self) -> bool:
+        return not self.concerts_loaded and not self.concerts
+
+    @rx.var
+    def spectacles_loading(self) -> bool:
+        return not self.spectacles_loaded and not self.spectacles
+
+    @rx.var
+    def expositions_loading(self) -> bool:
+        return not self.expositions_loaded and not self.expositions
+
+    @rx.var
+    def films_loading(self) -> bool:
+        return not self.movies_loaded and not self.movies

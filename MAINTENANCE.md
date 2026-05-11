@@ -77,7 +77,7 @@ If a secret leaks (webhook URL, API token, DB password), regenerate it at the so
 | Variable | Where to regenerate |
 |----------|-------------------|
 | `URL_WEBHOOK_DIDI` | Discord → Server Settings → Integrations → Webhooks |
-| `NGROK_TOKEN` | ngrok.com → Dashboard → Auth Tokens |
+| `CLOUDFLARE_TUNNEL_TOKEN` | Cloudflare Zero Trust → Networks → Tunnels → your tunnel → Configure |
 | `POSTGRES_PASSWORD` | Change in `.env`, then `docker compose down -v && docker compose up -d` |
 | `AIRFLOW_SECRET_KEY` | Generate a new random string, update `.env`, restart Airflow |
 

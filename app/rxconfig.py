@@ -21,6 +21,6 @@ config = rx.Config(
     env=rx.Env.PROD,
     backend_port=8000,
     frontend_port=3000,
-    api_url=os.getenv("BACKEND_URL", "https://api.mosaik-project.com"),
+    api_url=os.getenv("API_URL") or os.getenv("BACKEND_URL") or "http://localhost:8000",
     show_built_with_reflex=False,
 )

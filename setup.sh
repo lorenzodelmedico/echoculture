@@ -1,27 +1,34 @@
 #!/bin/bash
+# ============================================================
+# SynkOS — first-time bootstrap
+# ============================================================
+# Run from a fresh clone, after `cp .env.example .env` and filling in values.
+# Idempotent: safe to re-run.
+# ============================================================
 
-echo "🚀 Démarrage du setup complet d'EchoCulture..."
+set -e
 
-# 1. Nettoyage radical (On repart sur des bases saines)
-echo "🧹 Nettoyage des anciens conteneurs et volumes..."
-docker compose down -v
+if [[ ! -f .env ]]; then
+    echo "❌ .env not found. Run: cp .env.example .env  and fill in values."
+    exit 1
+fi
 
-# 2. Suppression des logs locaux pour éviter les erreurs de permissions
-rm -rf ./logs
-mkdir logs
+# Ensure the logs dir exists with permissions Airflow can write to
+mkdir -p logs
+chmod 777 logs
 
-# 3. Lancement des services Docker (Postgres, Mongo, Airflow)
-echo "🐳 Lancement de Docker (Build & Up)..."
+# Build images and bring everything up (cloudflared stays off — opt in with --profile cloudflare)
+echo "🐳 Building and starting services..."
 docker compose up -d --build
 
-echo "⏳ Attente du démarrage des bases de données (15s)..."
+echo "⏳ Waiting 15s for Postgres / Mongo / Airflow to settle..."
 sleep 15
 
-# 4. Peuplement du Bronze (Via ton script local Poetry)
-echo "📥 Récupération des données Bronze (Scraping)..."
-
-poetry run python -m scrapers.archipop_bronze
-
-echo "✅ Setup terminé !"
-echo "👉 Tu peux maintenant lancer le test Silver avec :"
-echo "docker exec -it echoculture-airflow-scheduler-1 airflow tasks test archipop_pipeline llm_structuration 2026-04-06"
+echo "✅ Services up. Useful URLs:"
+echo "   • App           http://localhost:3000"
+echo "   • Airflow       http://localhost:8080  (admin / admin)"
+echo "   • Adminer (PG)  http://localhost:8082"
+echo "   • Mongo Express http://localhost:8081"
+echo
+echo "📥 Trigger the first scrape from the Airflow UI (or):"
+echo "   docker exec echoculture-airflow-scheduler-1 airflow dags trigger scraper_bdxc_mongodb_to_pg"
