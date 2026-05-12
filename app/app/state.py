@@ -21,7 +21,7 @@ def _schema_version() -> str:
     """SHA-1 of the cached models' field names — changes when models change,
     invalidating any cached payloads that no longer match the current shape.
     Bump _CACHE_SALT to force-invalidate all client caches without a model change."""
-    _CACHE_SALT = "v5"
+    _CACHE_SALT = "v6"
     fingerprint: dict = {"_salt": _CACHE_SALT}
     for cls in (EventData, MovieData, TodayItem):
         fields = getattr(cls, "model_fields", None) or getattr(cls, "__fields__", {})
